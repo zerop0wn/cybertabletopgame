@@ -117,12 +117,16 @@ def create_default_scenarios() -> Dict[str, Scenario]:
             "englishText": "MISSION: Penetrate NH360 SharePoint Server\nTARGET: SharePoint Server (sharepoint-1)\nOBJECTIVE: Gain Remote Code Execution\n\nINTEL:\n- SharePoint Server 2019 detected\n- WAF in permissive mode\n- No EDR protection\n- Untrusted data deserialization enabled\n\nPHASE 1: Reconnaissance\n- Conduct infrastructure reconnaissance\n- Identify vulnerabilities and attack vectors\n- Select appropriate scanning tools\n\nPHASE 2: Exploitation\n- Choose the most effective attack vector\n- Exploit identified vulnerabilities\n- Establish persistence and maintain access",
             "targetInfo": "Target: sharepoint-1 (NH360 SharePoint Server)\nInfrastructure: WAF → SharePoint Server → Database\nSharePoint Version: 2019 (Unpatched)\nSecurity Posture: WAF permissive, no EDR, deserialization enabled",
             "objectives": [
-                "Conduct reconnaissance to identify attack surface",
-                "Discover and analyze potential vulnerabilities",
-                "Select and execute appropriate attack vector",
-                "Establish command and control",
-                "Create persistence mechanism"
-            ]
+                "Turn 1: Conduct reconnaissance to identify attack surface and vulnerabilities",
+                "Turn 2: Select and execute appropriate attack vector to gain RCE",
+                "Turn 3: Establish persistence and maintain access"
+            ],
+            "phasedObjectives": {
+                "turn_1": "Reconnaissance - Scan infrastructure, identify vulnerabilities, select scanning tools",
+                "turn_2": "Exploitation - Launch attack to gain remote code execution",
+                "turn_3": "Persistence - Establish command and control, create backdoors",
+                "turn_4": "Pivot Strategy - Assess attack success, choose next move (lateral movement, alternative attack, or persistence verification)"
+            }
         },
         blue_briefing={
             "alertLevel": "CRITICAL",
@@ -136,14 +140,16 @@ def create_default_scenarios() -> Dict[str, Scenario]:
                 "Known CVE-2025-53770 (SharePoint RCE) applicable and actively exploited"
             ],
             "recommendedActions": [
-                "Monitor WAF logs for suspicious POST requests to SharePoint endpoints with serialized payloads",
-                "Watch for command execution patterns in process trees (w3wp.exe spawning cmd.exe or powershell.exe)",
-                "Alert on outbound network connections from sharepoint-1 to external IPs",
-                "Monitor file system for new .aspx backdoors in SharePoint directories",
-                "Check for unexpected .aspx files in SharePoint directories",
-                "Isolate compromised host immediately if exploitation detected",
-                "Rotate ASP.NET machine keys after patching"
-            ]
+                "Turn 1: Monitor WAF logs for suspicious POST requests to SharePoint endpoints with serialized payloads",
+                "Turn 2: Watch for command execution patterns in process trees (w3wp.exe spawning cmd.exe or powershell.exe)",
+                "Turn 3: Alert on outbound network connections from sharepoint-1 to external IPs, isolate compromised host if exploitation detected"
+            ],
+            "phasedActions": {
+                "turn_1": "Monitor and detect - Watch WAF logs, scan for suspicious activity, establish baseline",
+                "turn_2": "Respond and contain - Block attacks, investigate alerts, begin containment procedures",
+                "turn_3": "Remediate and harden - Isolate compromised systems, remove persistence, patch vulnerabilities",
+                "turn_4": "Post-incident investigation - Determine if attack succeeded, identify compromised systems, check for persistence mechanisms"
+            }
         },
         topology=Topology(
             nodes=[
@@ -174,43 +180,37 @@ def create_default_scenarios() -> Dict[str, Scenario]:
         required_scan_tool=ScanToolType.OWASP_ZAP,  # Correct scan tool for this scenario
         scan_artifacts={
             ScanToolType.OWASP_ZAP.value: {
-                "vulnerability": "CVE-2025-53770 (SharePoint RCE via Deserialization)",
-                "severity": "Critical",
-                "target": "/_api/* endpoints",
-                "sharepoint_version": "2019",
-                "confidence": "High",
-                "recommendation": "Exploit available for this vulnerability. Active exploitation in the wild.",
-                "zap": "Microsoft SharePoint Server 2019 detected\nVulnerability: CVE-2025-53770 (SharePoint RCE via Deserialization)\nConfidence: High\nPath: /_api/web, /_api/site, /_api/contextinfo\nMethod: POST\nDeserialization: Untrusted data deserialization enabled\nStatus: Actively exploited"
+                "server": "Microsoft-IIS/10.0",
+                "application": "SharePoint Server 2019",
+                "endpoints": "/_api/web, /_api/site, /_api/contextinfo",
+                "methods": "POST, GET",
+                "findings": "API endpoints accept complex data structures. Object serialization functionality detected in REST API endpoints.",
+                "configuration": "SharePoint Server 2019 with REST API endpoints accepting structured data payloads",
+                "zap": "Microsoft SharePoint Server 2019 detected\nApplication: SharePoint Server 2019\nEndpoints: /_api/web, /_api/site, /_api/contextinfo\nMethods: POST, GET\nConfiguration: API endpoints accept complex data structures\nNote: Object serialization functionality detected in API calls\nStatus: Review API endpoint data handling"
             },
             ScanToolType.NMAP.value: {
                 "ports": "80/tcp open http, 443/tcp open https, 1433/tcp filtered mssql, 8080/tcp open http-proxy",
                 "service_detection": "Microsoft-IIS/10.0, SharePoint Server 2019, Proxy service on 8080",
-                "vulnerability": "Exposed proxy service on non-standard port",
-                "severity": "Medium",
+                "findings": "Proxy service detected on non-standard port. Potential unauthorized access vector through proxy configuration.",
                 "target": "sharepoint-1:8080",
-                "confidence": "High",
-                "recommendation": "Proxy service may allow unauthorized access",
-                "nmap": "PORT     STATE SERVICE\n80/tcp   open  http\n443/tcp  open  https\n1433/tcp filtered mssql\n8080/tcp open  http-proxy\n\nService: Microsoft-IIS/10.0, SharePoint Server 2019\nProxy detected on port 8080"
+                "configuration": "Proxy service on port 8080 may allow traffic forwarding and potential bypass of security controls",
+                "nmap": "PORT     STATE SERVICE\n80/tcp   open  http\n443/tcp  open  https\n1433/tcp filtered mssql\n8080/tcp open  http-proxy\n\nService: Microsoft-IIS/10.0, SharePoint Server 2019\nProxy detected on port 8080\nNote: Proxy service may allow unauthorized access\nConfiguration: Non-standard proxy port configuration detected\nStatus: Review proxy service security posture"
             },
             ScanToolType.SQLMAP.value: {
                 "target": "/_api/web/lists?$filter=Title eq 'test'",
-                "sql_injection": "Not detected",
-                "vulnerability": "No SQL injection vulnerabilities found",
-                "severity": "None",
+                "sql_injection": "Not detected in primary endpoints",
                 "database": "SQL Server (parameterized queries)",
-                "confidence": "High",
-                "recommendation": "SharePoint API uses parameterized queries. SQL injection not applicable. Focus on deserialization vulnerability.",
-                "sqlmap": "Target: /_api/web/lists?$filter=Title eq 'test'\nSQL Injection: Not detected\nDatabase: SQL Server\nNote: SharePoint uses parameterized queries. SQL injection not applicable.\n\nNote: This is informational only - not linked to any attack."
+                "findings": "Primary API endpoints use parameterized queries. Legacy endpoints may have different security posture.",
+                "configuration": "Modern endpoints secured, but legacy API paths may have different query handling",
+                "sqlmap": "Target: /_api/web/lists?$filter=Title eq 'test'\nSQL Injection: Not detected in primary endpoints\nDatabase: SQL Server\nNote: Modern endpoints use parameterized queries\nConfiguration: Legacy endpoints may have different security posture\nStatus: Further investigation of legacy endpoints recommended"
             },
             ScanToolType.NIKTO.value: {
                 "server": "Microsoft-IIS/10.0",
-                "vulnerability": "SharePoint Server 2019 detected",
-                "severity": "Informational",
+                "application": "SharePoint Server 2019",
                 "target": "/",
-                "issues": "SharePoint Server 2019 with potential deserialization vulnerability",
-                "confidence": "High",
-                "recommendation": "SharePoint Server 2019 detected. Check for CVE-2025-53770 patch status.",
-                "nikto": "Microsoft-IIS/10.0 detected\nSharePoint Server 2019\nTarget: /\nNote: Check for CVE-2025-53770 patch status\n\nNote: This is informational only - not linked to any attack."
+                "findings": "SharePoint Server 2019 detected with standard configuration",
+                "configuration": "Standard SharePoint Server 2019 installation detected",
+                "nikto": "Microsoft-IIS/10.0 detected\nSharePoint Server 2019\nTarget: /\nConfiguration: Standard SharePoint installation\nNote: Review server configuration and patch status\nStatus: Standard SharePoint deployment detected"
             },
         },
         attacks=[
@@ -222,7 +222,7 @@ def create_default_scenarios() -> Dict[str, Scenario]:
                 preconditions=[],
                 effects={
                     "alerts": 4,
-                    "impact": "Remote code execution achieved via CVE-2025-53770. Attacker can execute arbitrary commands on sharepoint-1 as SHAREPOINT\\sp_service user.",
+                    "impact": "Web application attack targeting API endpoints. Attempts to exploit data handling mechanisms in REST API.",
                     "indicators": [
                         "Process spawn: cmd.exe/powershell.exe spawned by w3wp.exe",
                         "Network connection: sharepoint-1 → 198.51.100.7:4444 (reverse shell)",
@@ -242,7 +242,7 @@ def create_default_scenarios() -> Dict[str, Scenario]:
                 preconditions=[],
                 effects={
                     "alerts": 2,
-                    "impact": "SQL injection attempt failed. SharePoint uses parameterized queries.",
+                    "impact": "Database interaction attack targeting query endpoints. Attempts to manipulate database queries through API parameters.",
                     "indicators": [
                         "Database query anomalies detected",
                         "SQL injection attempt blocked by parameterized queries",
@@ -261,7 +261,7 @@ def create_default_scenarios() -> Dict[str, Scenario]:
                 preconditions=[],
                 effects={
                     "alerts": 3,
-                    "impact": "Network-based attack via proxy service. Unauthorized access through port 8080.",
+                    "impact": "Network-based attack targeting proxy services. Attempts to bypass security controls through non-standard ports.",
                     "indicators": [
                         "Unauthorized proxy access on port 8080",
                         "Network traffic anomalies",
@@ -278,7 +278,15 @@ def create_default_scenarios() -> Dict[str, Scenario]:
                 from_node="internet",
                 to_node="sharepoint-1",
                 preconditions=[],
-                effects={"alerts": 2},
+                effects={
+                    "alerts": 2,
+                    "impact": "Authentication attack targeting login endpoints. Attempts to gain access through credential enumeration.",
+                    "indicators": [
+                        "Multiple failed login attempts detected",
+                        "Rate limiting triggered",
+                        "Attack unsuccessful: No valid credentials found"
+                    ]
+                },
                 is_correct_choice=False,  # Bruteforce is incorrect
             ),
         ],
@@ -287,6 +295,7 @@ def create_default_scenarios() -> Dict[str, Scenario]:
             Hint(step=2, text="Correlate outbound network connections from sharepoint-1 with process spawn events (w3wp.exe spawning cmd.exe or powershell.exe).", unlock_at=120),
             Hint(step=3, text="Review SharePoint logs for deserialization errors or unexpected .aspx files in LAYOUTS directory.", unlock_at=180),
         ],
+        max_turns_per_side=4,  # Four 5-minute turns per side
     )
     
     # Scenario 2: Phishing to Endpoint

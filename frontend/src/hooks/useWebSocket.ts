@@ -32,6 +32,11 @@ function getWebSocketUrl(): string | undefined {
     
     // For production or remote hosts, construct URL from current host
     // Use same protocol and hostname, but port 8000 for backend
+    // If VITE_PUBLIC_BACKEND_URL is set, use that instead (for production builds)
+    const publicBackendUrl = import.meta.env.VITE_PUBLIC_BACKEND_URL;
+    if (publicBackendUrl) {
+      return publicBackendUrl;
+    }
     // Socket.IO client expects HTTP/HTTPS URLs, not ws:///wss://
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
@@ -232,15 +237,131 @@ export function useWebSocket(role: 'gm' | 'red' | 'blue' | 'audience' | null) {
           const scanTool = event.payload?.tool;
           const scanSuccess = event.payload?.success || false;
           
+          // Add new scan result to the list
+          const newScanResult = {
+            scan_id: event.payload?.scan_id || '',
+            tool: scanTool,
+            target_node: event.payload?.target_node || '',
+            success: scanSuccess,
+            results: event.payload?.results || {},
+            timestamp: event.payload?.timestamp || new Date().toISOString(),
+            message: event.payload?.message || '',
+            player_name: event.payload?.player_name,
+            source_ip: event.payload?.source_ip,  // Include source IP
+          };
+          
+          // Get existing scan results or initialize empty array
+          const existingResults = Array.isArray(store.gameState.red_scan_results) 
+            ? store.gameState.red_scan_results 
+            : [];
+          
+          // Check if this scan_id already exists (prevent duplicates)
+          const scanExists = existingResults.some(s => s && s.scan_id === newScanResult.scan_id);
+          
+          const updatedResults = scanExists 
+            ? existingResults 
+            : [...existingResults, newScanResult];
+          
           store.setGameState({
             ...store.gameState,
             red_scan_completed: true,
             red_scan_tool: scanTool,
             red_scan_success: scanSuccess,
+            red_scan_results: updatedResults,
           });
-          console.log('[WebSocket] Scan completed event - tool:', scanTool, 'success:', scanSuccess, 'updated gameState');
+          console.log('[WebSocket] Scan completed event - tool:', scanTool, 'success:', scanSuccess, 'total scans:', updatedResults.length, 'scan_id:', newScanResult.scan_id);
         } else {
           console.warn('[WebSocket] Scan completed event received but gameState is null');
+        }
+      }
+
+      // Handle vulnerability_identified events
+      if (event.kind === 'vulnerability_identified' || event.kind === 'VULNERABILITY_IDENTIFIED') {
+        if (store.gameState) {
+          const votes = event.payload?.votes || {};  // Full votes dict (player_name -> tool)
+          const totalVotes = event.payload?.total_votes || 0;
+          
+          store.setGameState({
+            ...store.gameState,
+            red_vulnerability_identified: event.payload?.majority_is_correct || false,
+            red_vulnerability_votes: votes,
+          });
+          console.log('[WebSocket] Vulnerability identification event - total votes:', totalVotes, 'majority correct:', event.payload?.majority_is_correct);
+        }
+      }
+      
+      // Handle ip_identified events
+      if (event.kind === 'ip_identified' || event.kind === 'IP_IDENTIFIED') {
+        if (store.gameState) {
+          const votes = event.payload?.votes || {};  // Full votes dict (player_name -> ip)
+          const totalVotes = event.payload?.total_votes || 0;
+          
+          store.setGameState({
+            ...store.gameState,
+            blue_ip_identified: event.payload?.majority_is_correct || false,
+            blue_ip_votes: votes,
+          });
+          console.log('[WebSocket] IP identification event - total votes:', totalVotes, 'majority correct:', event.payload?.majority_is_correct);
+        }
+      }
+      
+      // Handle action_identified events
+      if (event.kind === 'action_identified' || event.kind === 'ACTION_IDENTIFIED') {
+        if (store.gameState) {
+          const votes = event.payload?.votes || {};  // Full votes dict (player_name -> action_type)
+          const totalVotes = event.payload?.total_votes || 0;
+          
+          store.setGameState({
+            ...store.gameState,
+            blue_action_identified: event.payload?.majority_is_correct || false,
+            blue_action_votes: votes,
+          });
+          console.log('[WebSocket] Action identification event - total votes:', totalVotes, 'majority correct:', event.payload?.majority_is_correct);
+        }
+      }
+      
+      // Handle investigation_completed events
+      if (event.kind === 'investigation_completed' || event.kind === 'INVESTIGATION_COMPLETED') {
+        if (store.gameState) {
+          const votes = event.payload?.votes || {};  // Full votes dict (player_name -> attack_status)
+          const totalVotes = event.payload?.total_votes || 0;
+          
+          store.setGameState({
+            ...store.gameState,
+            blue_investigation_completed: event.payload?.majority_is_correct || false,
+            blue_investigation_votes: votes,
+          });
+          console.log('[WebSocket] Investigation completed event - total votes:', totalVotes, 'majority correct:', event.payload?.majority_is_correct);
+        }
+      }
+      
+      // Handle pivot_strategy_selected events
+      if (event.kind === 'pivot_strategy_selected' || event.kind === 'PIVOT_STRATEGY_SELECTED') {
+        if (store.gameState) {
+          const votes = event.payload?.votes || {};  // Full votes dict (player_name -> pivot_strategy)
+          const totalVotes = event.payload?.total_votes || 0;
+          
+          store.setGameState({
+            ...store.gameState,
+            red_pivot_strategy_selected: event.payload?.majority_is_correct || false,
+            red_pivot_votes: votes,
+          });
+          console.log('[WebSocket] Pivot strategy selected event - total votes:', totalVotes, 'majority correct:', event.payload?.majority_is_correct);
+        }
+      }
+      
+      // Handle attack_selected events
+      if (event.kind === 'attack_selected' || event.kind === 'ATTACK_SELECTED') {
+        if (store.gameState) {
+          const votes = event.payload?.votes || {};  // Full votes dict (player_name -> attack_id)
+          const totalVotes = event.payload?.total_votes || 0;
+          
+          store.setGameState({
+            ...store.gameState,
+            red_attack_selected: event.payload?.has_majority || false,
+            red_attack_votes: votes,
+          });
+          console.log('[WebSocket] Attack selected event - total votes:', totalVotes, 'majority reached:', event.payload?.has_majority, 'majority correct:', event.payload?.majority_is_correct);
         }
       }
       
@@ -353,15 +474,23 @@ export function useWebSocket(role: 'gm' | 'red' | 'blue' | 'audience' | null) {
           // Note: Event is already added to store at line 190, so it will appear in timeline
           if (store.gameState) {
             const oldTurn = store.gameState.current_turn;
+            const oldTurnStartTime = store.gameState.turn_start_time;
             // Use the turn_start_time from the event payload (backend sets it correctly)
             // If not provided, use current time as fallback
             const newTurnStartTime = event.payload.turn_start_time || new Date().toISOString();
-            store.setGameState({
-              ...store.gameState,
-              current_turn: event.payload.turn,
-              turn_start_time: newTurnStartTime,
-            });
-            console.log(`[WebSocket] Turn updated from ${oldTurn} to ${event.payload.turn}, turn_start_time: ${newTurnStartTime}`);
+            const newTurn = event.payload.turn;
+            
+            // Only update if values actually changed (prevent duplicate updates from multiple connections)
+            if (oldTurn !== newTurn || oldTurnStartTime !== newTurnStartTime) {
+              store.setGameState({
+                ...store.gameState,
+                current_turn: newTurn,
+                turn_start_time: newTurnStartTime,
+              });
+              console.log(`[WebSocket] Turn updated from ${oldTurn} to ${newTurn}, turn_start_time: ${newTurnStartTime}`);
+            } else {
+              console.log(`[WebSocket] Turn unchanged (${oldTurn}), skipping state update`);
+            }
           } else {
             console.warn('[WebSocket] TURN_CHANGED event received but gameState is null');
             // Try to fetch game state if we don't have it

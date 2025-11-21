@@ -60,6 +60,12 @@ export enum EventKind {
   TURN_CHANGED = "turn_changed",
   TURN_TIMEOUT = "turn_timeout",
   SCAN_COMPLETED = "scan_completed",
+  VULNERABILITY_IDENTIFIED = "vulnerability_identified",
+  IP_IDENTIFIED = "ip_identified",
+  ACTION_IDENTIFIED = "action_identified",
+  INVESTIGATION_COMPLETED = "investigation_completed",
+  PIVOT_STRATEGY_SELECTED = "pivot_strategy_selected",
+  ATTACK_SELECTED = "attack_selected",
   CHAT_MESSAGE = "chat_message",
   ACTIVITY_EVENT = "activity_event",
   PRESENCE_UPDATE = "presence_update",
@@ -202,9 +208,37 @@ export interface GameState {
   current_turn?: "red" | "blue";  // Whose turn it is
   turn_start_time?: string;  // When current turn started (ISO string)
   turn_time_limit?: number;  // Turn time limit in seconds (default: 180)
+  red_turn_count?: number;  // Current turn number for Red (0-indexed)
+  blue_turn_count?: number;  // Current turn number for Blue (0-indexed)
+  max_turns_per_side?: number;  // Maximum turns per side (None = unlimited)
   red_scan_completed?: boolean;  // Whether Red team has completed a scan
-  red_scan_tool?: ScanToolType;  // Which scan tool was used
-  red_scan_success?: boolean;  // Whether the correct scan tool was used
+  red_scan_tool?: ScanToolType;  // Which scan tool was used (deprecated, use red_scan_results)
+  red_scan_success?: boolean;  // Whether the correct scan tool was used (deprecated, use red_scan_results)
+  red_scan_results?: Array<{
+    scan_id: string;
+    tool: string;
+    target_node: string;
+    success: boolean;
+    results: Record<string, string>;
+    timestamp: string;
+    message: string;
+    player_name?: string;
+    source_ip?: string;  // Source IP address used for this scan
+  }>;  // All scan results for this turn
+  red_vulnerability_identified?: boolean;  // Whether team has identified the correct vulnerability
+  red_vulnerability_votes?: Record<string, string>;  // player_name -> scan_tool (which tool they voted for)
+  blue_ip_identified?: boolean;  // Whether Blue team has identified the correct scan IP
+  blue_ip_votes?: Record<string, string>;  // player_name -> ip_address (which IP they voted for)
+  blue_action_identified?: boolean;  // Whether Blue team has identified the correct action to take
+  blue_action_votes?: Record<string, string>;  // player_name -> action_type (which action they voted for)
+  blue_investigation_completed?: boolean;  // Whether Blue team has completed attack investigation
+  blue_investigation_votes?: Record<string, string>;  // player_name -> "succeeded" or "blocked"
+  red_pivot_strategy_selected?: boolean;  // Whether Red team has selected pivot strategy
+  red_pivot_votes?: Record<string, string>;  // player_name -> pivot_strategy ("lateral", "alternative", "persistence")
+  red_attack_selected?: boolean;  // Whether Red team has selected an attack via voting
+  red_attack_votes?: Record<string, string>;  // player_name -> attack_id (which attack they voted for)
+  red_scan_ips?: string[];  // IP addresses used for scanning
+  blocked_ips?: string[];  // IP addresses blocked by Blue team
   red_briefing_dismissed?: boolean;  // Whether Red team has dismissed the briefing (timer starts after this)
   red_scan_this_turn?: boolean;  // Whether Red team has scanned this turn
   red_attack_this_turn?: boolean;  // Whether Red team has attacked this turn

@@ -155,6 +155,7 @@ class Scenario(BaseModel):
     scan_artifacts: Dict[str, Dict[str, str]] = Field(default_factory=dict)  # Artifacts per scan tool
     red_briefing: Optional[Dict[str, Any]] = None  # Red team briefing (terminal style)
     blue_briefing: Optional[Dict[str, Any]] = None  # Blue team briefing (FBI alert style)
+    max_turns_per_side: Optional[int] = None  # Maximum turns per side (None = unlimited, 3 = three turns per side)
 
 
 class Score(BaseModel):
@@ -177,9 +178,27 @@ class GameState(BaseModel):
     current_turn: Optional[Literal["red", "blue"]] = None  # Whose turn it is
     turn_start_time: Optional[datetime] = None  # When current turn started
     turn_time_limit: int = 300  # 5 minutes per turn (configurable)
+    red_turn_count: int = 0  # Current turn number for Red (0-indexed, so 0, 1, 2 = turns 1, 2, 3)
+    blue_turn_count: int = 0  # Current turn number for Blue (0-indexed, so 0, 1, 2 = turns 1, 2, 3)
+    max_turns_per_side: Optional[int] = None  # Scenario-specific limit (None = unlimited, 3 = three turns per side)
     red_scan_completed: bool = False  # Whether Red team has completed a scan
-    red_scan_tool: Optional[ScanToolType] = None  # Which scan tool was used
-    red_scan_success: bool = False  # Whether the correct scan tool was used
+    red_scan_tool: Optional[ScanToolType] = None  # Which scan tool was used (deprecated, use red_scan_results)
+    red_scan_success: bool = False  # Whether the correct scan tool was used (deprecated, use red_scan_results)
+    red_scan_results: List[Dict[str, Any]] = Field(default_factory=list)  # All scan results for this turn
+    red_vulnerability_identified: bool = False  # Whether team has identified the correct vulnerability
+    red_vulnerability_votes: Dict[str, str] = Field(default_factory=dict)  # player_name -> scan_tool (which tool they voted for)
+    blue_ip_identified: bool = False  # Whether Blue team has identified the correct scan IP
+    blue_ip_votes: Dict[str, str] = Field(default_factory=dict)  # player_name -> ip_address (which IP they voted for)
+    blue_action_identified: bool = False  # Whether Blue team has identified the correct action to take
+    blue_action_votes: Dict[str, str] = Field(default_factory=dict)  # player_name -> action_type (which action they voted for)
+    blue_investigation_completed: bool = False  # Whether Blue team has completed attack success investigation
+    blue_investigation_votes: Dict[str, str] = Field(default_factory=dict)  # player_name -> "succeeded" or "blocked" (attack status)
+    red_pivot_strategy_selected: bool = False  # Whether Red team has selected pivot strategy
+    red_pivot_votes: Dict[str, str] = Field(default_factory=dict)  # player_name -> pivot_strategy ("lateral", "alternative", "persistence")
+    red_attack_selected: bool = False  # Whether Red team has selected an attack via voting
+    red_attack_votes: Dict[str, str] = Field(default_factory=dict)  # player_name -> attack_id (which attack they voted for)
+    red_scan_ips: List[str] = Field(default_factory=list)  # IP addresses used for scanning
+    blocked_ips: List[str] = Field(default_factory=list)  # IP addresses blocked by Blue team
     red_briefing_dismissed: bool = False  # Whether Red team has dismissed the briefing (timer starts after this)
     # Per-turn action limits
     red_scan_this_turn: bool = False  # Whether Red team has scanned this turn
@@ -201,6 +220,12 @@ class EventKind(str, Enum):
     TURN_CHANGED = "turn_changed"
     TURN_TIMEOUT = "turn_timeout"
     SCAN_COMPLETED = "scan_completed"
+    VULNERABILITY_IDENTIFIED = "vulnerability_identified"
+    IP_IDENTIFIED = "ip_identified"
+    ACTION_IDENTIFIED = "action_identified"
+    INVESTIGATION_COMPLETED = "investigation_completed"
+    PIVOT_STRATEGY_SELECTED = "pivot_strategy_selected"
+    ATTACK_SELECTED = "attack_selected"
     CHAT_MESSAGE = "chat_message"
     ACTIVITY_EVENT = "activity_event"
     PRESENCE_UPDATE = "presence_update"

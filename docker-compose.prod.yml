@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - GM_ADMIN_USER=${GM_ADMIN_USER:-admin}
+      - GM_ADMIN_PASSWORD=${GM_ADMIN_PASSWORD:-admin}
+      - FEATURE_AUTH_GM=${FEATURE_AUTH_GM:-true}
+      - FEATURE_JOIN_CODES=${FEATURE_JOIN_CODES:-true}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        - VITE_PUBLIC_BACKEND_URL=${VITE_PUBLIC_BACKEND_URL:-http://localhost:8000}
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+

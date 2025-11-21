@@ -136,10 +136,34 @@ async def start_game(request: GameStartRequest) -> GameState:
     # Don't set turn_start_time until Red team dismisses briefing
     game_state.turn_start_time = None
     game_state.turn_time_limit = 300  # 5 minutes per turn
+    # Initialize turn counters
+    game_state.red_turn_count = 0
+    game_state.blue_turn_count = 0
+    # Get scenario to check for turn limit
+    scenario = scenarios_cache.get(request.scenario_id)
+    if scenario and scenario.max_turns_per_side:
+        game_state.max_turns_per_side = scenario.max_turns_per_side
+    else:
+        game_state.max_turns_per_side = None  # Unlimited
     # Reset scan state
     game_state.red_scan_completed = False
     game_state.red_scan_tool = None
     game_state.red_scan_success = False
+    game_state.red_scan_results = []  # Clear all scan results
+    game_state.red_vulnerability_identified = False
+    game_state.red_vulnerability_votes = {}  # Clear all votes
+    game_state.blue_ip_identified = False
+    game_state.blue_ip_votes = {}  # Clear Blue team IP votes
+    game_state.blue_action_identified = False
+    game_state.blue_action_votes = {}  # Clear Blue team action votes
+    game_state.blue_investigation_completed = False
+    game_state.blue_investigation_votes = {}  # Clear Blue team investigation votes
+    game_state.red_pivot_strategy_selected = False
+    game_state.red_pivot_votes = {}  # Clear Red team pivot votes
+    game_state.red_attack_selected = False
+    game_state.red_attack_votes = {}  # Clear Red team attack votes
+    game_state.red_scan_ips = []  # Clear scan IPs
+    game_state.blocked_ips = []  # Clear blocked IPs
     # Reset briefing dismissed flag
     game_state.red_briefing_dismissed = False
     # Reset per-turn action limits
@@ -391,6 +415,21 @@ async def reset_game() -> GameState:
     game_state.red_scan_completed = False
     game_state.red_scan_tool = None
     game_state.red_scan_success = False
+    game_state.red_scan_results = []  # Clear all scan results
+    game_state.red_vulnerability_identified = False
+    game_state.red_vulnerability_votes = {}  # Clear all votes
+    game_state.blue_ip_identified = False
+    game_state.blue_ip_votes = {}  # Clear Blue team IP votes
+    game_state.blue_action_identified = False
+    game_state.blue_action_votes = {}  # Clear Blue team action votes
+    game_state.blue_investigation_completed = False
+    game_state.blue_investigation_votes = {}  # Clear Blue team investigation votes
+    game_state.red_pivot_strategy_selected = False
+    game_state.red_pivot_votes = {}  # Clear Red team pivot votes
+    game_state.red_attack_selected = False
+    game_state.red_attack_votes = {}  # Clear Red team attack votes
+    game_state.red_scan_ips = []  # Clear scan IPs
+    game_state.blocked_ips = []  # Clear blocked IPs
     # Reset briefing dismissed flag
     game_state.red_briefing_dismissed = False
     # Reset per-turn action limits

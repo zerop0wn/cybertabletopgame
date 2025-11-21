@@ -7,7 +7,9 @@ import { useWebSocket } from '../hooks/useWebSocket';
 import { codesOn } from '../lib/flags';
 import PewPewMap from '../components/PewPewMap';
 import AlertFeed from '../components/AlertFeed';
-import ActionPalette from '../components/ActionPalette';
+import IPIdentification from '../components/IPIdentification';
+import ActionIdentification from '../components/ActionIdentification';
+import AttackInvestigation from '../components/AttackInvestigation';
 import TimelineStrip from '../components/TimelineStrip';
 import ScorePanel from '../components/ScorePanel';
 import GameBanner from '../components/GameBanner';
@@ -784,8 +786,39 @@ export default function Blue() {
               );
             })()}
 
-            {/* Action Palette */}
-            <ActionPalette />
+            {/* IP Identification Voting */}
+            {gameState?.red_scan_ips && gameState.red_scan_ips.length > 0 && (
+              <IPIdentification
+                scanIPs={gameState.red_scan_ips}
+                votes={gameState.blue_ip_votes || {}}
+                ipIdentified={gameState.blue_ip_identified || false}
+              />
+            )}
+
+            {/* Action Identification Voting */}
+            {(() => {
+              const activeAttack = events.find(
+                e => (e.kind === 'attack_launched' || e.kind === 'ATTACK_LAUNCHED') && 
+                !events.some(e2 => e2.kind === 'attack_resolved' && e2.payload?.attack_id === e.payload?.attack_id)
+              );
+              if (activeAttack) {
+                return (
+                  <ActionIdentification
+                    votes={gameState.blue_action_votes || {}}
+                    actionIdentified={gameState.blue_action_identified || false}
+                    attackId={activeAttack.payload?.attack_id}
+                    attackType={activeAttack.payload?.attack_type}
+                  />
+                );
+              }
+              return null;
+            })()}
+
+            {/* Attack Investigation (Turn 4) */}
+            <AttackInvestigation
+              votes={gameState.blue_investigation_votes || {}}
+              investigationCompleted={gameState.blue_investigation_completed || false}
+            />
 
             {/* Attack Status */}
             <div className="bg-slate-800 rounded-2xl p-6">

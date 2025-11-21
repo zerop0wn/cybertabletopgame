@@ -8,11 +8,23 @@ interface ActionPaletteProps {
 }
 
 export default function ActionPalette({ onActionSubmitted }: ActionPaletteProps) {
-  const { currentScenario, gameState, playerName, role } = useGameStore();
+  const { currentScenario, gameState, playerName, role, alerts } = useGameStore();
   const [selectedType, setSelectedType] = useState<BlueActionType | null>(null);
   const [target, setTarget] = useState('');
   const [useCustomTarget, setUseCustomTarget] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  
+  // Extract scan IPs from alerts when BLOCK_IP is selected
+  const scanIPs = useMemo(() => {
+    if (selectedType !== BlueActionType.BLOCK_IP) return [];
+    const ips = new Set<string>();
+    alerts.forEach(alert => {
+      if (alert.ioc && alert.ioc.source_ip) {
+        ips.add(String(alert.ioc.source_ip));
+      }
+    });
+    return Array.from(ips).sort();
+  }, [selectedType, alerts]);
   
   // Get available targets from scenario nodes
   const availableTargets = useMemo(() => {
@@ -169,11 +181,32 @@ export default function ActionPalette({ onActionSubmitted }: ActionPaletteProps)
             </>
           ) : (
             <>
+              {selectedType === BlueActionType.BLOCK_IP && scanIPs.length > 0 && (
+                <div className="mb-2 p-2 bg-slate-900 rounded border border-slate-600">
+                  <div className="text-xs text-slate-400 mb-1">Scan IPs from alerts:</div>
+                  <div className="flex flex-wrap gap-1">
+                    {scanIPs.map(ip => (
+                      <button
+                        key={ip}
+                        type="button"
+                        onClick={() => setTarget(ip)}
+                        className="text-xs px-2 py-1 bg-blue-900/50 hover:bg-blue-800/50 rounded border border-blue-700/50 text-blue-300"
+                      >
+                        {ip}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <input
                 type="text"
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                placeholder={availableTargets.length > 0 ? "e.g., 198.51.100.7, example.com" : "e.g., web-1, 198.51.100.7, example.com"}
+                placeholder={selectedType === BlueActionType.BLOCK_IP 
+                  ? "e.g., 198.51.100.7 (or click IPs above)" 
+                  : availableTargets.length > 0 
+                    ? "e.g., 198.51.100.7, example.com" 
+                    : "e.g., web-1, 198.51.100.7, example.com"}
                 className="w-full px-4 py-2 bg-slate-700 rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2"
               />
               {availableTargets.length > 0 && (

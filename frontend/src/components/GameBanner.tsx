@@ -6,6 +6,23 @@ import { shallow } from 'zustand/shallow';
 const SCENARIO_DURATION_LIMIT = 1800; // 30 minutes in seconds
 const TURN_TIME_LIMIT = 300; // 5 minutes in seconds
 
+// Debounce utility to prevent rapid state changes
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+}
+
 function GameBanner() {
   // Subscribe only to the specific fields we need for visibility
   // Use shallow comparison to prevent re-renders when other gameState fields change
@@ -26,8 +43,12 @@ function GameBanner() {
   // Use ref to access full gameState without causing re-renders
   const gameStateRef = useRef(useGameStore.getState().gameState);
   
-  // Update ref when gameState changes (but don't trigger re-render)
+  // Subscribe to keep ref updated (like GameClock does)
   useEffect(() => {
+    // Update ref immediately
+    gameStateRef.current = useGameStore.getState().gameState;
+    
+    // Subscribe to keep it updated
     const unsubscribe = useGameStore.subscribe(
       (state) => state.gameState,
       (gameState) => {
@@ -61,6 +82,7 @@ function GameBanner() {
   // Calculate game time remaining
   useEffect(() => {
     const calculateGameTime = () => {
+      // Always get the latest gameState from ref
       const currentGameState = gameStateRef.current;
       
       if (!currentGameState || currentGameState.status !== 'running') {
@@ -160,21 +182,14 @@ function GameBanner() {
     };
 
     const updateTimes = () => {
+      // Always get fresh values from refs (they're updated by subscription)
       const gameRemaining = calculateGameTime();
       const turnRemaining = calculateTurnTime();
-      // Only update state if values actually changed (prevent unnecessary re-renders)
-      setGameTimeRemaining(prev => {
-        // Round to nearest second to prevent micro-updates
-        const roundedPrev = Math.floor(prev);
-        const roundedNew = Math.floor(gameRemaining);
-        return roundedPrev !== roundedNew ? gameRemaining : prev;
-      });
-      setTurnTimeRemaining(prev => {
-        // Round to nearest second to prevent micro-updates
-        const roundedPrev = Math.floor(prev);
-        const roundedNew = Math.floor(turnRemaining);
-        return roundedPrev !== roundedNew ? turnRemaining : prev;
-      });
+      
+      // Update state - always update to ensure countdown works
+      // React will batch updates and prevent unnecessary re-renders
+      setGameTimeRemaining(gameRemaining);
+      setTurnTimeRemaining(turnRemaining);
     };
 
     // Initial update
@@ -198,14 +213,17 @@ function GameBanner() {
     const gameState = gameStateRef.current;
     if (gameStatus === 'running' && gameState) {
       // Only update if start_time or turn_start_time actually changed
+      // Compare string values, not references, to avoid false positives
       const startTimeChanged = gameState?.start_time !== prevStartTimeRef.current;
       // Use subscribed turnStartTime to detect changes immediately (not from ref which updates async)
+      // Simple comparison - if the value is different from what we last saw, it changed
       const turnStartTimeChanged = turnStartTime !== prevTurnStartTimeRef.current;
       const turnChanged = currentTurn !== prevCurrentTurnRef.current;
       
-      // Game time - only update if start_time changed
+      // Game time - update when start_time changes (like GameClock does)
       if (startTimeChanged && gameState?.start_time) {
         prevStartTimeRef.current = gameState.start_time;
+        // Calculate and update immediately when start_time changes
         try {
           const now = new Date().getTime();
           let start: number;
@@ -224,7 +242,7 @@ function GameBanner() {
             const elapsed = Math.floor((now - start) / 1000);
             setGameTimeRemaining(Math.max(0, SCENARIO_DURATION_LIMIT - elapsed));
           } else if (gameState.timer !== undefined && gameState.timer !== null) {
-            // Fallback to backend timer if start_time is invalid
+            // Fallback to backend timer
             const elapsed = Math.max(0, Math.min(gameState.timer, SCENARIO_DURATION_LIMIT));
             setGameTimeRemaining(Math.max(0, SCENARIO_DURATION_LIMIT - elapsed));
           }
@@ -236,57 +254,53 @@ function GameBanner() {
           }
         }
       } else if (!gameState?.start_time && gameState.timer !== undefined && gameState.timer !== null) {
-        // Fallback to backend timer if start_time is not available (only on initial load)
+        // Fallback to backend timer if start_time is not available
         if (prevStartTimeRef.current === null) {
           const elapsed = Math.max(0, Math.min(gameState.timer, SCENARIO_DURATION_LIMIT));
           setGameTimeRemaining(Math.max(0, SCENARIO_DURATION_LIMIT - elapsed));
+          prevStartTimeRef.current = ''; // Mark as initialized
         }
       }
 
-      // Turn time - only update if turn_start_time or current_turn changed
-      // When turn changes, immediately reset to full time limit, then calculate from new start time
-      // Use subscribed turnStartTime value directly (not from gameState ref) to detect changes immediately
-      if ((turnStartTimeChanged || turnChanged) && currentTurn && turnStartTime) {
-        prevTurnStartTimeRef.current = turnStartTime;
-        prevCurrentTurnRef.current = currentTurn;
-        const effectiveLimit = turnTimeLimit || TURN_TIME_LIMIT;
+      // Turn time - update when turn_start_time or current_turn changed
+      if (turnStartTimeChanged || turnChanged) {
+        // Update refs immediately
+        if (turnStartTime) {
+          prevTurnStartTimeRef.current = turnStartTime;
+        }
+        if (currentTurn) {
+          prevCurrentTurnRef.current = currentTurn;
+        }
         
-        try {
-          const now = new Date().getTime();
-          let start: number;
-          const startTimeStr = turnStartTime;
-          
-          if (typeof startTimeStr === 'string' && !startTimeStr.endsWith('Z') && !startTimeStr.includes('+') && !startTimeStr.includes('-', 10)) {
-            start = new Date(startTimeStr + 'Z').getTime();
-            if (isNaN(start)) {
+        // Calculate and update immediately when turn changes (like TurnIndicator does)
+        const effectiveLimit = turnTimeLimit || TURN_TIME_LIMIT;
+        if (currentTurn && turnStartTime) {
+          try {
+            const now = new Date().getTime();
+            let start: number;
+            const startTimeStr = turnStartTime;
+            
+            if (typeof startTimeStr === 'string' && !startTimeStr.endsWith('Z') && !startTimeStr.includes('+') && !startTimeStr.includes('-', 10)) {
+              start = new Date(startTimeStr + 'Z').getTime();
+              if (isNaN(start)) {
+                start = new Date(startTimeStr).getTime();
+              }
+            } else {
               start = new Date(startTimeStr).getTime();
             }
-          } else {
-            start = new Date(startTimeStr).getTime();
-          }
-          
-          if (!isNaN(start)) {
-            if (start <= now) {
-              // Calculate elapsed time from the new turn start time
+            
+            if (!isNaN(start) && start <= now) {
               const elapsed = Math.floor((now - start) / 1000);
               setTurnTimeRemaining(Math.max(0, effectiveLimit - elapsed));
             } else {
-              // Start time is in the future (timezone issue) - set to full limit
               setTurnTimeRemaining(effectiveLimit);
             }
-          } else {
-            // Invalid start time - set to full limit
+          } catch (e) {
             setTurnTimeRemaining(effectiveLimit);
           }
-        } catch (e) {
-          // On error, reset to full time limit
+        } else if (currentTurn && !turnStartTime) {
           setTurnTimeRemaining(effectiveLimit);
         }
-      } else if (turnChanged && currentTurn && !turnStartTime) {
-        // Turn changed but no turn_start_time yet - reset to full limit
-        const effectiveLimit = turnTimeLimit || TURN_TIME_LIMIT;
-        setTurnTimeRemaining(effectiveLimit);
-        prevCurrentTurnRef.current = currentTurn;
       }
     } else {
       // Reset refs when game is not running
@@ -296,12 +310,10 @@ function GameBanner() {
       setGameTimeRemaining(SCENARIO_DURATION_LIMIT);
       setTurnTimeRemaining(effectiveTurnTimeLimit);
     }
-  }, [gameStatus, effectiveTurnTimeLimit, currentTurn, turnStartTime]); // Add turnStartTime to detect turn changes
+  }, [gameStatus, effectiveTurnTimeLimit, currentTurn, turnStartTime, turnTimeLimit]); // Include turnTimeLimit for completeness
 
   // Calculate visibility based on subscribed values
   // Use useMemo to prevent recalculation on every render
-  // Use ref to track previous visibility to prevent flickering
-  const prevShouldShowRef = useRef<boolean>(false);
   const shouldShow = useMemo(() => {
     if (!gameStatus || gameStatus !== 'running') {
       return false;
@@ -313,10 +325,9 @@ function GameBanner() {
     return true;
   }, [gameStatus, role, redBriefingDismissed]);
   
-  // Update ref when visibility changes
-  useEffect(() => {
-    prevShouldShowRef.current = shouldShow;
-  }, [shouldShow]);
+  // Use shouldShow directly - debouncing was causing banner to not appear
+  // The original flickering issue should be fixed by the improved update logic
+  const stableShouldShow = shouldShow;
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
@@ -361,11 +372,20 @@ function GameBanner() {
     }
   };
 
-  // Always render but use CSS class to control visibility
-  // This prevents layout shifts while keeping the component mounted
-  // Use CSS visibility instead of conditional return to prevent unmount/remount flickering
+  // Always render but use CSS visibility/opacity to control visibility
+  // This prevents layout shifts and DOM removal which causes flickering
+  // Use opacity and pointer-events instead of hidden class
   return (
-    <div className={`w-full bg-gradient-to-r from-slate-800 via-slate-800/95 to-slate-800 border-b-2 border-slate-700/50 shadow-lg ${!shouldShow ? 'hidden' : ''}`}>
+    <div 
+      className="w-full bg-gradient-to-r from-slate-800 via-slate-800/95 to-slate-800 border-b-2 border-slate-700/50 shadow-lg transition-opacity duration-200"
+      style={{
+        opacity: stableShouldShow ? 1 : 0,
+        visibility: stableShouldShow ? 'visible' : 'hidden',
+        pointerEvents: stableShouldShow ? 'auto' : 'none',
+        height: stableShouldShow ? 'auto' : '0',
+        overflow: stableShouldShow ? 'visible' : 'hidden',
+      }}
+    >
       <div className="container mx-auto px-4 sm:px-6 py-3 max-w-7xl">
         <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-6">
                 {/* Turn Indicator */}

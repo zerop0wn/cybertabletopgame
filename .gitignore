@@ -40,6 +40,8 @@ data/
 # Environment
 .env
 .env.local
+.env.production
+aws/.env
 
 # Build
 *.log

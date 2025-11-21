@@ -156,6 +156,14 @@ export default function TurnIndicator() {
 
   const isRedTurn = currentTurn === 'red';
   const isBlueTurn = currentTurn === 'blue';
+  
+  // Get turn counts
+  const redTurnCount = gameState?.red_turn_count || 0;
+  const blueTurnCount = gameState?.blue_turn_count || 0;
+  const maxTurns = gameState?.max_turns_per_side;
+  
+  // Calculate current turn number (1-indexed for display)
+  const currentTurnNumber = isRedTurn ? redTurnCount + 1 : blueTurnCount + 1;
 
   return (
     <div className={`rounded-2xl p-4 border-2 ${
@@ -175,6 +183,11 @@ export default function TurnIndicator() {
             }`}>
               {isRedTurn ? 'RED TEAM' : 'BLUE TEAM'}
             </div>
+            {maxTurns && (
+              <div className="text-xs text-slate-500 mt-0.5">
+                Turn {currentTurnNumber}/{maxTurns}
+              </div>
+            )}
           </div>
         </div>
         

@@ -8,6 +8,10 @@ import { codesOn } from '../lib/flags';
 import PewPewMap from '../components/PewPewMap';
 import GameBanner from '../components/GameBanner';
 import ScanToolSelector from '../components/ScanToolSelector';
+import ScanResultsBoard from '../components/ScanResultsBoard';
+import VulnerabilityIdentification from '../components/VulnerabilityIdentification';
+import PivotStrategy from '../components/PivotStrategy';
+import AttackSelection from '../components/AttackSelection';
 import RedBriefing from '../components/RedBriefing';
 import ScorePanel from '../components/ScorePanel';
 import TeamChat from '../components/TeamChat';
@@ -71,6 +75,7 @@ export default function Red() {
       const { setGameState } = useGameStore.getState();
       setGameState(state);
       console.log('[Red] Loaded game state:', state);
+      console.log('[Red] Scan results in loaded state:', state.red_scan_results?.length || 0, 'results');
       return state;
     } catch (error) {
       console.error('[Red] Failed to load game state:', error);
@@ -453,7 +458,7 @@ export default function Red() {
     scanStateRef.current.success = result.success;
     scanStateRef.current.tool = result.tool;
     
-    // Reload game state to get updated scan status from backend
+    // Reload game state to get updated scan status from backend (including all scan results)
     try {
       const updatedState = await gameApi.getState();
       const store = useGameStore.getState();
@@ -474,6 +479,7 @@ export default function Red() {
         completed: scanStateRef.current.completed,
         success: scanStateRef.current.success,
         tool: scanStateRef.current.tool,
+        total_scan_results: updatedState.red_scan_results?.length || 0,
       });
     } catch (error) {
       console.error('Failed to reload game state after scan:', error);
@@ -542,19 +548,22 @@ export default function Red() {
 
       // Check if scan is required and completed
       if (selectedAttack.requires_scan) {
-        // Use stable scan state from ref
-        const scanCompleted = scanStateRef.current.completed;
-        const scanSuccess = scanStateRef.current.success;
-        const scanTool = scanStateRef.current.tool;
+        // Use gameState (persists across turns)
+        const scanCompleted = currentState.red_scan_completed || false;
+        const scanResults = currentState.red_scan_results || [];
+        const normalizedRequiredTool = selectedAttack.required_scan_tool ? String(selectedAttack.required_scan_tool) : null;
+        const hasMatchingScan = normalizedRequiredTool
+          ? scanResults.some(scan => String(scan.tool) === normalizedRequiredTool)
+          : true;
         
-        if (!scanCompleted || !scanSuccess) {
+        if (!scanCompleted || scanResults.length === 0) {
           alert('This attack requires a successful reconnaissance scan first. Please complete the scan in the Reconnaissance tab.');
           setIsLaunching(false);
           return;
         }
         // Check if the correct scan tool was used
-        if (selectedAttack.required_scan_tool && scanTool !== selectedAttack.required_scan_tool) {
-          alert(`This attack requires a ${selectedAttack.required_scan_tool} scan. You used ${scanTool || 'unknown'}. Please run the correct scan tool first.`);
+        if (normalizedRequiredTool && !hasMatchingScan) {
+          alert(`This attack requires a ${selectedAttack.required_scan_tool} scan. Please run the correct scan tool first.`);
           setIsLaunching(false);
           return;
         }
@@ -830,7 +839,8 @@ export default function Red() {
 
               {/* Reconnaissance Tab */}
               {activeTab === 'reconnaissance' && (
-                <div className="space-y-4">
+                <div className="space-y-6">
+                  {/* Scan Tool Selector */}
                   {currentScenario ? (
                     <ScanToolSelector
                       scenarioId={currentScenario.id}
@@ -843,7 +853,37 @@ export default function Red() {
                   ) : (
                     <div className="text-slate-400 text-center py-8">No scenario loaded</div>
                   )}
-                  {gameState?.red_scan_completed && (
+
+                  {/* Intel Board - Show all scan results */}
+                  {(() => {
+                    const hasScanResults = gameState?.red_scan_results && gameState.red_scan_results.length > 0;
+                    if (hasScanResults) {
+                      console.log('[Red] Rendering Intel Board with', gameState.red_scan_results.length, 'scan results');
+                    } else {
+                      console.log('[Red] No scan results to display. red_scan_results:', gameState?.red_scan_results);
+                    }
+                    return hasScanResults ? (
+                      <ScanResultsBoard scanResults={gameState.red_scan_results} />
+                    ) : null;
+                  })()}
+
+                  {/* Vulnerability Identification Voting */}
+                  {gameState?.red_scan_results && gameState.red_scan_results.length > 0 && (
+                    <VulnerabilityIdentification
+                      scanResults={gameState.red_scan_results}
+                      votes={gameState.red_vulnerability_votes || {}}
+                      vulnerabilityIdentified={gameState.red_vulnerability_identified || false}
+                    />
+                  )}
+
+                  {/* Pivot Strategy Selection (Turn 4) */}
+                  <PivotStrategy
+                    votes={gameState.red_pivot_votes || {}}
+                    strategySelected={gameState.red_pivot_strategy_selected || false}
+                  />
+
+                  {/* Legacy scan status message (keep for backward compatibility) */}
+                  {gameState?.red_scan_completed && (!gameState?.red_scan_results || gameState.red_scan_results.length === 0) && (
                     <div className={`mt-4 p-4 rounded-lg border-2 ${
                       gameState.red_scan_success
                         ? 'border-green-500 bg-green-900/20'
@@ -903,49 +943,69 @@ export default function Red() {
               {/* Attacks Tab */}
               {activeTab === 'attacks' && (
                 <div className="space-y-4">
+                  {/* Attack Selection Voting (Turn 3) */}
+                  {gameState?.current_turn === 'red' && (gameState?.red_turn_count || 0) === 1 && currentScenario?.attacks && (
+                    <AttackSelection
+                      attacks={currentScenario.attacks}
+                      votes={gameState.red_attack_votes || {}}
+                      attackSelected={gameState.red_attack_selected || false}
+                    />
+                  )}
+
                   {currentScenario ? (
                     currentScenario.attacks && currentScenario.attacks.length > 0 ? (
                     currentScenario.attacks.map((attack) => {
                       const requiresScan = attack.requires_scan || false;
-                      // Use stable scan state from ref to prevent flickering
-                      const scanCompleted = scanStateRef.current.completed;
-                      const scanSuccess = scanStateRef.current.success;
-                      const scanTool = scanStateRef.current.tool;
                       
-                      // Check if scan is required and if the correct scan tool was used
-                      // Compare scan tool values (both should be strings/enum values)
-                      // Normalize both to strings for comparison
-                      const normalizedScanTool = scanTool ? String(scanTool) : null;
+                      // Check scan state from gameState (persists across turns)
+                      const scanCompleted = gameState?.red_scan_completed || false;
+                      const scanResults = gameState?.red_scan_results || [];
+                      
+                      // Check if any scan result matches the required scan tool
                       const normalizedRequiredTool = attack.required_scan_tool ? String(attack.required_scan_tool) : null;
-                      
-                      const scanToolMatches = normalizedRequiredTool 
-                        ? (normalizedScanTool === normalizedRequiredTool)
+                      const hasMatchingScan = normalizedRequiredTool
+                        ? scanResults.some(scan => String(scan.tool) === normalizedRequiredTool)
                         : true; // No specific tool required
                       
                       const scanRequired = requiresScan && (
                         !scanCompleted || 
-                        !scanSuccess ||
-                        !scanToolMatches
+                        scanResults.length === 0 ||
+                        !hasMatchingScan
                       );
                       
                       // Attacks that don't require scans should be available even without a scan
-                      // Attacks that require scans need successful scan completion
-                      const canLaunch = requiresScan 
-                        ? (!scanRequired && scanCompleted && scanSuccess)
+                      // Attacks that require scans need scan completion with matching tool
+                      let canLaunch = requiresScan 
+                        ? (!scanRequired && scanCompleted && hasMatchingScan)
                         : true; // No scan required, so always available
                       
-                      // Debug logging for scan/attack matching (reduced - only log when enabled)
-                      if (requiresScan && attack.id === 'atk-rce-1' && canLaunch) {
-                        console.log('[Red] Attack scan check (RCE - ENABLED):', {
-                          attackId: attack.id,
-                          scanCompleted,
-                          scanSuccess,
-                          scanTool: normalizedScanTool,
-                          requiredTool: normalizedRequiredTool,
-                          scanToolMatches,
-                          canLaunch,
-                        });
+                      // In Turn 3, require voting before launching
+                      const redTurnCount = gameState?.red_turn_count || 0;
+                      const attackSelected = gameState?.red_attack_selected || false;
+                      const attackVotes = gameState?.red_attack_votes || {};
+                      
+                      // Determine majority attack ID
+                      const voteCounts: Record<string, number> = {};
+                      Object.values(attackVotes).forEach((attackId) => {
+                        voteCounts[String(attackId)] = (voteCounts[String(attackId)] || 0) + 1;
+                      });
+                      const majorityAttackId = Object.entries(voteCounts).find(
+                        ([_, count]) => count > (Object.keys(attackVotes).length / 2)
+                      )?.[0];
+                      
+                      // In Turn 3, only allow launching if:
+                      // 1. Attack has been selected via voting (majority reached)
+                      // 2. This attack matches the majority vote
+                      if (redTurnCount === 1) {
+                        if (!attackSelected) {
+                          canLaunch = false; // Must vote first
+                        } else if (majorityAttackId && attack.id !== majorityAttackId) {
+                          canLaunch = false; // Can only launch the majority-selected attack
+                        }
                       }
+                      
+                      const votingRequired = redTurnCount === 1 && !attackSelected;
+                      const notMajorityAttack = redTurnCount === 1 && attackSelected && majorityAttackId && attack.id !== majorityAttackId;
                       
                       return (
                         <div
@@ -953,28 +1013,47 @@ export default function Red() {
                           className={`p-4 rounded-lg border-2 transition-colors ${
                             selectedAttack?.id === attack.id
                               ? 'border-red-500 bg-red-900/20'
-                              : scanRequired
+                              : scanRequired || votingRequired || notMajorityAttack
                               ? 'border-slate-700 bg-slate-800 opacity-60 cursor-not-allowed'
                               : 'border-slate-600 bg-slate-700 hover:border-slate-500 cursor-pointer'
                           }`}
                           onClick={() => {
-                            if (!scanRequired && canLaunch) {
+                            if (!scanRequired && canLaunch && !votingRequired && !notMajorityAttack) {
                               setSelectedAttack(attack);
                               setShowConfirmModal(true);
                             }
                           }}
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                            <div className="font-semibold truncate flex-1 min-w-0">{attack.attack_type}</div>
+                            <div className="font-semibold truncate flex-1 min-w-0">
+                              {attack.effects?.impact 
+                                ? attack.effects.impact.split('.')[0]  // Show first sentence of impact
+                                : attack.attack_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                            </div>
                             {scanRequired && (
                               <span className="text-xs px-2 py-1 bg-yellow-900/50 text-yellow-300 rounded flex-shrink-0">
                                 Scan Required
+                              </span>
+                            )}
+                            {votingRequired && (
+                              <span className="text-xs px-2 py-1 bg-blue-900/50 text-blue-300 rounded flex-shrink-0">
+                                Vote Required
+                              </span>
+                            )}
+                            {notMajorityAttack && (
+                              <span className="text-xs px-2 py-1 bg-slate-900/50 text-slate-300 rounded flex-shrink-0">
+                                Not Selected
                               </span>
                             )}
                           </div>
                           <div className="text-sm text-slate-400 break-words">
                             {attack.from_node} → {attack.to_node}
                           </div>
+                          {attack.effects?.impact && (
+                            <div className="text-xs text-slate-500 mt-2 break-words">
+                              {attack.effects.impact}
+                            </div>
+                          )}
                           {attack.preconditions.length > 0 && (
                             <div className="text-xs text-slate-500 mt-2 break-words">
                               Preconditions: {attack.preconditions.join(', ')}
@@ -983,6 +1062,16 @@ export default function Red() {
                           {scanRequired && (
                             <div className="text-xs text-yellow-400 mt-2">
                               ⚠️ Requires successful reconnaissance scan first
+                            </div>
+                          )}
+                          {votingRequired && (
+                            <div className="text-xs text-blue-400 mt-2">
+                              ⚠️ Team must vote on attack selection first
+                            </div>
+                          )}
+                          {notMajorityAttack && (
+                            <div className="text-xs text-slate-400 mt-2">
+                              Team selected a different attack
                             </div>
                           )}
                         </div>

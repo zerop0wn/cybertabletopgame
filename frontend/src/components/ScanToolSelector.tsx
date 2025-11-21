@@ -139,18 +139,14 @@ export default function ScanToolSelector({
       )}
 
       {scanResult && (
-        <div className={`mt-4 p-4 rounded-lg border-2 ${
-          scanResult.success
-            ? 'border-green-500 bg-green-900/20'
-            : 'border-yellow-500 bg-yellow-900/20'
-        }`}>
+        <div className="mt-4 p-4 rounded-lg border-2 border-slate-600 bg-slate-700/50">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-xl">{scanResult.success ? '✅' : '⚠️'}</span>
+            <span className="text-xl">📊</span>
             <div className="font-semibold">
-              {scanResult.success ? 'Vulnerability Identified!' : 'Scan Complete'}
+              Scan Complete
             </div>
           </div>
-          <p className="text-sm mb-3">{scanResult.message}</p>
+          <p className="text-sm mb-3 text-slate-300">{scanResult.message}</p>
           <div className="bg-slate-800 rounded p-3 mt-2">
             <div className="text-xs font-semibold mb-2 text-slate-400">Scan Results:</div>
             <div className="space-y-1">
@@ -161,6 +157,9 @@ export default function ScanToolSelector({
                 </div>
               ))}
             </div>
+          </div>
+          <div className="mt-3 text-xs text-slate-400 italic">
+            Note: Review all scan results in the Intel Board above to identify which scan found the vulnerability.
           </div>
         </div>
       )}

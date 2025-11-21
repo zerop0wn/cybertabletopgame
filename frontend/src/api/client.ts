@@ -22,6 +22,11 @@ function getApiBaseUrl(): string {
     
     // For production or remote hosts, construct URL from current host
     // Use same protocol and hostname, but port 8000 for backend
+    // If VITE_PUBLIC_BACKEND_URL is set, use that instead (for production builds)
+    const publicBackendUrl = import.meta.env.VITE_PUBLIC_BACKEND_URL;
+    if (publicBackendUrl) {
+      return `${publicBackendUrl}/api`;
+    }
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
     return `${protocol}//${hostname}:8000/api`;
@@ -107,6 +112,20 @@ export const attacksApi = {
 export const scansApi = {
   scan: async (request: ScanRequest): Promise<ScanResult> => {
     const { data } = await api.post('/scans/scan', request);
+    return data;
+  },
+  identifyVulnerability: async (playerName: string, scanTool: string) => {
+    const { data } = await api.post('/scans/identify-vulnerability', {
+      player_name: playerName,
+      scan_tool: scanTool,
+    });
+    return data;
+  },
+  selectAttack: async (playerName: string, attackId: string) => {
+    const { data } = await api.post('/scans/select-attack', {
+      player_name: playerName,
+      attack_id: attackId,
+    });
     return data;
   },
 };

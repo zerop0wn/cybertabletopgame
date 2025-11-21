@@ -39,9 +39,67 @@ async def timer_loop():
                     if turn_elapsed >= game_state.turn_time_limit:
                         print(f"[TIMER] Turn timeout reached for {game_state.current_turn} team (elapsed: {turn_elapsed}s, limit: {game_state.turn_time_limit}s)")
                         
-                        # Auto-advance turn immediately
+                        # Initialize turn counters if they don't exist (defensive check for backwards compatibility)
+                        if not hasattr(game_state, 'red_turn_count'):
+                            game_state.red_turn_count = 0
+                        if not hasattr(game_state, 'blue_turn_count'):
+                            game_state.blue_turn_count = 0
+                        
+                        # Increment turn counter for the expired turn
                         old_turn = game_state.current_turn
+                        if old_turn == "red":
+                            game_state.red_turn_count += 1
+                            print(f"[TIMER] Red team turn count: {game_state.red_turn_count}")
+                        elif old_turn == "blue":
+                            game_state.blue_turn_count += 1
+                            print(f"[TIMER] Blue team turn count: {game_state.blue_turn_count}")
+                        
+                        # Check if both teams have completed their turns
+                        max_turns = getattr(game_state, 'max_turns_per_side', None)
+                        if max_turns:
+                            red_turn_count = getattr(game_state, 'red_turn_count', 0)
+                            blue_turn_count = getattr(game_state, 'blue_turn_count', 0)
+                            red_done = red_turn_count >= max_turns
+                            blue_done = blue_turn_count >= max_turns
+                            
+                            if red_done and blue_done:
+                                print(f"[TIMER] Both teams have completed their turns ({max_turns} each). Ending round.")
+                                game_state.status = GameStatus.FINISHED
+                                
+                                # Emit round_ended event
+                                end_event = create_event(
+                                    EventKind.ROUND_ENDED,
+                                    {
+                                        "reason": "turn_limit_reached",
+                                        "elapsed_seconds": elapsed,
+                                        "red_turns": red_turn_count,
+                                        "blue_turns": blue_turn_count,
+                                        "max_turns_per_side": max_turns,
+                                    }
+                                )
+                                await broadcaster.emit_to_all(end_event)
+                                
+                                if settings.FEATURE_WS_SNAPSHOT:
+                                    from app.store import add_event
+                                    add_event(end_event)
+                                
+                                # Don't advance turn, game is over
+                                continue
+                        
+                        # Auto-advance turn immediately
                         new_turn = "blue" if old_turn == "red" else "red"
+                        
+                        # If the new turn's team has used all their turns, skip to the other team
+                        if max_turns:
+                            red_turn_count = getattr(game_state, 'red_turn_count', 0)
+                            blue_turn_count = getattr(game_state, 'blue_turn_count', 0)
+                            if new_turn == "red" and red_turn_count >= max_turns:
+                                print(f"[TIMER] Red team has used all {max_turns} turns, skipping to Blue")
+                                new_turn = "blue"
+                            elif new_turn == "blue" and blue_turn_count >= max_turns:
+                                print(f"[TIMER] Blue team has used all {max_turns} turns, skipping to Red")
+                                new_turn = "red"
+                        
                         game_state.current_turn = new_turn
                         game_state.turn_start_time = datetime.utcnow()  # Reset timer for new turn
                         # Reset per-turn action limits
