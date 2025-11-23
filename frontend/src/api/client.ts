@@ -20,13 +20,33 @@ function getApiBaseUrl(): string {
       return '/api';
     }
     
-    // For production or remote hosts, construct URL from current host
-    // Use same protocol and hostname, but port 8000 for backend
-    // If VITE_PUBLIC_BACKEND_URL is set, use that instead (for production builds)
+    // Check if VITE_PUBLIC_BACKEND_URL is set and points to an ALB (old deployment)
+    // If it does, ignore it and use relative URLs (for EC2 deployment with Nginx)
     const publicBackendUrl = import.meta.env.VITE_PUBLIC_BACKEND_URL;
     if (publicBackendUrl) {
+      // If it's an ALB URL, ignore it and use relative URLs (Nginx will proxy)
+      if (publicBackendUrl.includes('.elb.amazonaws.com') || 
+          publicBackendUrl.includes('apprunner') ||
+          publicBackendUrl.includes('cloudfront.net')) {
+        // Use relative URL - Nginx will proxy to backend
+        return '/api';
+      }
+      // Otherwise, use the provided URL (for other deployments)
       return `${publicBackendUrl}/api`;
     }
+    
+    // For EC2 deployment with Nginx, use relative URLs (Nginx proxies both frontend and backend)
+    // Check if we're on a standard port (80/443), assume Nginx is proxying - use relative URL
+    const isStandardPort = window.location.port === '' || 
+                          window.location.port === '80' || 
+                          window.location.port === '443';
+    
+    if (isStandardPort) {
+      // Use relative URL - Nginx will proxy to backend
+      return '/api';
+    }
+    
+    // Otherwise, construct backend URL with port 8000
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
     return `${protocol}//${hostname}:8000/api`;
