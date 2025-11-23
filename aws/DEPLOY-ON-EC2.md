@@ -44,23 +44,28 @@ docker buildx create --use
 sudo docker-compose -f docker-compose.prod.yml up -d --build
 ```
 
-## Quick Deploy (Recommended)
+## Quick Deploy (Recommended - Bypasses Docker Compose Bug)
 
-Since you're already in the project directory, run:
+Use the automated script that builds and starts everything:
+
+```bash
+# Make script executable
+chmod +x aws/build-and-start-containers.sh
+
+# Run the script
+sudo ./aws/build-and-start-containers.sh
+```
+
+Or manually:
 
 ```bash
 # Build images manually
 sudo docker build -f backend/Dockerfile.prod -t pewpew-backend:latest ./backend
 sudo docker build -f frontend/Dockerfile.prod -t pewpew-frontend:latest ./frontend
 
-# Start containers
-sudo docker-compose -f docker-compose.prod.yml up -d
-
-# Check status
-sudo docker-compose -f docker-compose.prod.yml ps
-
-# View logs
-sudo docker-compose -f docker-compose.prod.yml logs -f
+# Start containers using manual script (bypasses docker-compose)
+chmod +x aws/start-containers-manual.sh
+sudo ./aws/start-containers-manual.sh
 ```
 
 ## Verify It's Working
