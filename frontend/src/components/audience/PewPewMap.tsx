@@ -20,7 +20,7 @@ type Trail = {
   createdAt: number;
   from: { x: number; y: number };
   to: { x: number; y: number };
-  state?: 'launched' | 'blocked' | 'hit' | 'miss';
+  state?: 'launched' | 'blocked' | 'hit' | 'miss' | string;
   result?: 'blocked' | 'hit' | 'miss';
   // Animation state
   shieldAnimation?: {

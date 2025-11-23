@@ -16,16 +16,21 @@ export default function AlertFeed() {
     return colors[severity] || 'bg-slate-600';
   };
 
+  // Helper function to convert timestamp to Date
+  const getTimestamp = (ts: string | Date): Date => {
+    return (ts as any) instanceof Date ? (ts as Date) : new Date(String(ts));
+  };
+  
   // Filter out alerts with invalid timestamps and sort
   const validAlerts = alerts.filter(alert => {
-    const timestamp = alert.timestamp instanceof Date ? alert.timestamp : new Date(alert.timestamp);
+    const timestamp = getTimestamp(alert.timestamp as any);
     return !isNaN(timestamp.getTime());
   });
   
   const sortedAlerts = [...validAlerts].sort(
     (a, b) => {
-      const timeA = a.timestamp instanceof Date ? a.timestamp : new Date(a.timestamp);
-      const timeB = b.timestamp instanceof Date ? b.timestamp : new Date(b.timestamp);
+      const timeA = getTimestamp(a.timestamp as any);
+      const timeB = getTimestamp(b.timestamp as any);
       return timeB.getTime() - timeA.getTime();
     }
   );
@@ -191,7 +196,7 @@ export default function AlertFeed() {
                     </span>
                     <span className="text-sm text-slate-400">{alert.source}</span>
                     <span className="text-xs text-slate-500">
-                      {(alert.timestamp instanceof Date ? alert.timestamp : new Date(alert.timestamp)).toLocaleTimeString()}
+                      {getTimestamp(alert.timestamp as any).toLocaleTimeString()}
                     </span>
                   </div>
                   <div className="font-semibold">{alert.summary}</div>

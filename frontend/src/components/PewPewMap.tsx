@@ -28,8 +28,8 @@ interface DefenseIndicator {
 export default function PewPewMap({ nodes, links, liveEvents, onNodeClick }: PewPewMapProps) {
   const [activeAnimations, setActiveAnimations] = useState<ActiveAnimation[]>([]);
   const [defenseIndicators, setDefenseIndicators] = useState<DefenseIndicator[]>([]);
-  const timerRefs = useRef<Map<string, NodeJS.Timeout>>(new Map()); // Track timers by attack ID
-  const defenseTimerRefs = useRef<Map<string, NodeJS.Timeout>>(new Map()); // Track timers for defense indicators
+  const timerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map()); // Track timers by attack ID
+  const defenseTimerRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map()); // Track timers for defense indicators
   const processedEventIds = useRef<Set<string>>(new Set());
   const processedNodes = useRef<string>(JSON.stringify(nodes.map(n => n.id).sort()));
   const lastEventIdsRef = useRef<string>('');
@@ -83,7 +83,7 @@ export default function PewPewMap({ nodes, links, liveEvents, onNodeClick }: Pew
         // Mark event as processed immediately (before processing) to avoid duplicate processing
         processedEventIds.current.add(event.id);
         
-        if (event.kind === EventKind.ATTACK_LAUNCHED || event.kind === 'attack_launched') {
+        if ((event.kind as string) === 'attack_launched' || event.kind === EventKind.ATTACK_LAUNCHED) {
           const fromNode = nodes.find((n) => n.id === event.payload.from);
           const toNode = nodes.find((n) => n.id === event.payload.to);
           const attackId = event.payload.attack_id || event.id; // Use attack_id if available, fallback to event.id
@@ -100,7 +100,7 @@ export default function PewPewMap({ nodes, links, liveEvents, onNodeClick }: Pew
             existingIds.add(attackId);
             console.log('[PewPewMap] Added attack animation:', attackId, 'from', fromNode.id, 'to', toNode.id);
           }
-        } else if (event.kind === EventKind.ACTION_TAKEN || event.kind === 'action_taken') {
+        } else if ((event.kind as string) === 'action_taken' || event.kind === EventKind.ACTION_TAKEN) {
           // Blue team defense action - show indicator on target node
           const targetNodeId = event.payload?.target;
           const actionType = event.payload?.type || 'defense';
@@ -128,7 +128,7 @@ export default function PewPewMap({ nodes, links, liveEvents, onNodeClick }: Pew
             
             console.log('[PewPewMap] Added defense indicator:', defenseId, 'on node:', targetNodeId, 'action:', actionType);
           }
-        } else if (event.kind === EventKind.ATTACK_RESOLVED || event.kind === 'attack_resolved') {
+        } else if ((event.kind as string) === 'attack_resolved' || event.kind === EventKind.ATTACK_RESOLVED) {
           const result = event.payload.result;
           const attackId = event.payload.attack_id;
           
@@ -232,10 +232,11 @@ export default function PewPewMap({ nodes, links, liveEvents, onNodeClick }: Pew
       animationsToUpdate.forEach((animationType, attackId) => {
         if (!updatedIds.has(attackId) && uniqueNewAnimations.every(a => a.id !== attackId)) {
           // Try to find from/to from the most recent attack_resolved event
-          const resolvedEvent = newEvents.find(e => 
-            (e.kind === EventKind.ATTACK_RESOLVED || e.kind === 'attack_resolved') &&
-            e.payload.attack_id === attackId
-          );
+          const resolvedEvent = newEvents.find(e => {
+            const kind = e.kind as string;
+            return (kind === 'attack_resolved' || kind === EventKind.ATTACK_RESOLVED) &&
+                   e.payload.attack_id === attackId;
+          });
           if (resolvedEvent) {
             const from = resolvedEvent.payload.from || resolvedEvent.payload.from_node;
             const to = resolvedEvent.payload.to || resolvedEvent.payload.to_node;

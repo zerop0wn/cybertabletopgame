@@ -1,0 +1,179 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Simple EC2 instance with Docker for PewPew game'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: pewpew
+    Description: Project name
+  
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+  
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.micro, t3.small, t3.medium, t3.large]
+    Description: EC2 instance type
+  
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 Key Pair name for SSH access
+  
+  AllowedCIDRBlocks:
+    Type: CommaDelimitedList
+    Description: Allowed CIDR blocks for SSH access
+    Default: '0.0.0.0/0'
+  
+  VolumeSize:
+    Type: Number
+    Default: 20
+    Description: EBS volume size in GB
+    MinValue: 8
+    MaxValue: 100
+
+Resources:
+  # Security Group
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for PewPew EC2 instance
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Select [0, !Ref AllowedCIDRBlocks]
+          Description: SSH access
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP access
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS access
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-sg-${Environment}'
+
+  # IAM Role for EC2
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-ec2-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: SSMAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:UpdateInstanceInformation
+                  - ssmmessages:*
+                  - ssm:SendCommand
+                Resource: '*'
+
+  # Instance Profile
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # EC2 Instance
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0c55b159cbfafe1f0  # Amazon Linux 2023 (us-east-1) - Update if using different region
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref VolumeSize
+            VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          
+          # Install Docker
+          yum install -y docker
+          systemctl start docker
+          systemctl enable docker
+          usermod -a -G docker ec2-user
+          
+          # Install Docker Compose
+          curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+          ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+          
+          # Install Git
+          yum install -y git
+          
+          # Install CloudWatch agent (optional, for monitoring)
+          yum install -y amazon-cloudwatch-agent
+          
+          # Create app directory
+          mkdir -p /opt/pewpew
+          chown ec2-user:ec2-user /opt/pewpew
+          
+          # Note: Application will be deployed via SSH or CodeDeploy
+          echo "EC2 instance ready for deployment" > /opt/pewpew/README.txt
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref EC2Instance
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-InstanceId'
+  
+  PublicIP:
+    Description: Public IP address
+    Value: !GetAtt EC2Instance.PublicIp
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-PublicIP'
+  
+  PublicDNS:
+    Description: Public DNS name
+    Value: !GetAtt EC2Instance.PublicDnsName
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-PublicDNS'
+  
+  SecurityGroupId:
+    Description: Security Group ID
+    Value: !Ref EC2SecurityGroup
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-SecurityGroupId'
+  
+  ApplicationURL:
+    Description: Application URL
+    Value: !Sub 'http://${EC2Instance.PublicDnsName}'
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ApplicationURL'
+

@@ -37,10 +37,10 @@ export default function AttackConfirmModal({
             </div>
           </div>
           
-          {attack.description && (
+          {attack.effects?.impact && (
             <div>
-              <div className="text-sm text-slate-400 mb-1">Description</div>
-              <div className="text-slate-300">{attack.description}</div>
+              <div className="text-sm text-slate-400 mb-1">Impact</div>
+              <div className="text-slate-300">{attack.effects.impact}</div>
             </div>
           )}
         </div>

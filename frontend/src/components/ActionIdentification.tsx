@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useGameStore } from '../store/useGameStore';
 import { gameApi, actionsApi } from '../api/client';
-import { BlueActionType } from '../api/types';
+import { BlueActionType, EventKind } from '../api/types';
 
 interface ActionIdentificationProps {
   votes?: Record<string, string>;  // player_name -> action_type
@@ -24,8 +24,14 @@ export default function ActionIdentification({
 
   // Check if there's an active attack
   const activeAttack = events.find(
-    e => (e.kind === 'attack_launched' || e.kind === 'ATTACK_LAUNCHED') && 
-    !events.some(e2 => e2.kind === 'attack_resolved' && e2.payload?.attack_id === e.payload?.attack_id)
+    e => {
+      const kind = e.kind as string;
+      return (kind === 'attack_launched' || kind === 'ATTACK_LAUNCHED' || kind === EventKind.ATTACK_LAUNCHED) && 
+             !events.some(e2 => {
+               const e2Kind = e2.kind as string;
+               return (e2Kind === 'attack_resolved' || e2Kind === EventKind.ATTACK_RESOLVED) && e2.payload?.attack_id === e.payload?.attack_id;
+             });
+    }
   );
 
   // Available action types

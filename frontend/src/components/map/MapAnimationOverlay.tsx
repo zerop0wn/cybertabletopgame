@@ -309,5 +309,4 @@ export default MapAnimationOverlay;
 
 // Named exports
 export { BLUE_CASTLE, RED_SKULL };
-export type { MapAnimationAPI, Anchor };
 

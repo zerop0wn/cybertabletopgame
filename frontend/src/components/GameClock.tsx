@@ -1,9 +1,9 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, memo } from 'react';
 import { useGameStore } from '../store/useGameStore';
 
 const SCENARIO_DURATION_LIMIT = 1800; // 30 minutes in seconds
 
-export default function GameClock() {
+const GameClock = memo(function GameClock() {
   const { gameState } = useGameStore();
   const [displayTime, setDisplayTime] = useState({ elapsed: 0, remaining: SCENARIO_DURATION_LIMIT });
   const gameStateRef = useRef(gameState);
@@ -98,14 +98,35 @@ export default function GameClock() {
   }, []); // Empty deps - interval runs continuously, reads from ref
 
   // Force update when gameState changes (to ensure we recalculate immediately)
+  // But only when status or start_time changes, not on every timer update
+  const prevStatusRef = useRef(gameState?.status);
+  const prevStartTimeRef = useRef(gameState?.start_time);
+  
   useEffect(() => {
+    const statusChanged = gameState?.status !== prevStatusRef.current;
+    const startTimeChanged = gameState?.start_time !== prevStartTimeRef.current;
+    
+    // Only update if status or start_time actually changed (not just timer)
+    if (!statusChanged && !startTimeChanged) {
+      return; // Skip update to prevent flickering
+    }
+    
+    // Update refs
+    prevStatusRef.current = gameState?.status;
+    prevStartTimeRef.current = gameState?.start_time;
+    
     if (gameState?.status === 'running') {
       // Prefer backend timer value if available (calculated server-side, avoids timezone issues)
       if (gameState.timer !== undefined && gameState.timer !== null) {
         const elapsed = Math.max(0, Math.min(gameState.timer, SCENARIO_DURATION_LIMIT));
         const remaining = Math.max(0, SCENARIO_DURATION_LIMIT - elapsed);
-        // Removed console.log to reduce noise - timer updates frequently
-        setDisplayTime({ elapsed, remaining });
+        setDisplayTime(prev => {
+          // Only update if values actually changed
+          if (prev.elapsed !== elapsed || prev.remaining !== remaining) {
+            return { elapsed, remaining };
+          }
+          return prev;
+        });
         return;
       }
       
@@ -128,19 +149,25 @@ export default function GameClock() {
         if (!isNaN(start) && start <= now) {
           const elapsed = Math.floor((now - start) / 1000);
           const remaining = Math.max(0, SCENARIO_DURATION_LIMIT - elapsed);
-          // Removed console.log to reduce noise - timer updates frequently
-          setDisplayTime({ elapsed, remaining });
-        } else {
-          // Only log warnings for actual errors, not routine timezone handling
-          // console.warn('[GameClock] Invalid start_time in force update:', gameState.start_time, 'now:', now, 'start:', start);
+          setDisplayTime(prev => {
+            // Only update if values actually changed
+            if (prev.elapsed !== elapsed || prev.remaining !== remaining) {
+              return { elapsed, remaining };
+            }
+            return prev;
+          });
         }
       }
-      // Removed console.log for missing start_time - not an error condition
-    } else if (gameState?.status !== 'running') {
-      // Removed console.log to reduce noise
-      setDisplayTime({ elapsed: 0, remaining: SCENARIO_DURATION_LIMIT });
+    } else if (gameState?.status && (gameState.status as string) !== 'running') {
+      setDisplayTime(prev => {
+        // Only update if values actually changed
+        if (prev.elapsed !== 0 || prev.remaining !== SCENARIO_DURATION_LIMIT) {
+          return { elapsed: 0, remaining: SCENARIO_DURATION_LIMIT };
+        }
+        return prev;
+      });
     }
-  }, [gameState?.status, gameState?.start_time, gameState?.timer]);
+  }, [gameState?.status, gameState?.start_time]);
 
   const formatTime = (seconds: number): string => {
     // Ensure non-negative and within valid range
@@ -211,5 +238,9 @@ export default function GameClock() {
       </div>
     </div>
   );
-}
+});
+
+GameClock.displayName = 'GameClock';
+
+export default GameClock;
 

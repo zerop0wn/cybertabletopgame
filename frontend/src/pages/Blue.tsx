@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, memo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGameStore } from '../store/useGameStore';
 import { scenariosApi, gameApi, scoreApi, playersApi } from '../api/client';
-import { Scenario, Node, Link, Event } from '../api/types';
+import { Scenario, Node, Link, Event, EventKind, GameStatus } from '../api/types';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { codesOn } from '../lib/flags';
 import PewPewMap from '../components/PewPewMap';
@@ -119,16 +119,57 @@ export default function Blue() {
     return () => clearTimeout(timer);
   }, [authToken, sessionId, role, navigate]);
 
+  // Track if we're currently loading to prevent multiple simultaneous calls
+  const isLoadingGameStateRef = useRef(false);
+  
   // Define functions before they're used in useEffect hooks
   const loadGameState = async () => {
+    // Prevent multiple simultaneous calls
+    if (isLoadingGameStateRef.current) {
+      console.log('[Blue] loadGameState already in progress, skipping');
+      return useGameStore.getState().gameState;
+    }
+    
+    isLoadingGameStateRef.current = true;
     try {
       const state = await gameApi.getState();
-      setGameState(state);
-      return state;
+      // Only update state if we got a valid response
+      if (state && state.status) {
+        const { setGameState, gameState: currentState } = useGameStore.getState();
+        // If game was running and new state shows 'lobby' or 'finished' with lower round, this is likely stale
+        // Don't update to prevent flickering - the state management will handle this
+        const gameWasRunning = currentState && (currentState.status === GameStatus.RUNNING || String(currentState.status) === 'running');
+        const hasRunningIndicators = currentState && (currentState.current_scenario_id || currentState.round || currentState.start_time);
+        const newStateShowsLobby = state.status === GameStatus.LOBBY || String(state.status) === 'lobby';
+        const newStateShowsFinished = state.status === GameStatus.FINISHED || String(state.status) === 'finished';
+        
+        // Check if finished state is stale (lower round number)
+        if (gameWasRunning && hasRunningIndicators && newStateShowsFinished) {
+          const currentRound = currentState.round || 0;
+          const newRound = state.round || 0;
+          if (newRound < currentRound) {
+            console.warn('[Blue] Received stale finished status (round', newRound, 'vs current', currentRound, ') - ignoring to prevent flickering');
+            return currentState;
+          }
+        }
+        
+        if (gameWasRunning && hasRunningIndicators && newStateShowsLobby) {
+          console.warn('[Blue] Received lobby status while game is running - ignoring to prevent flickering');
+          return currentState;
+        }
+        setGameState(state);
+        return state;
+      } else {
+        console.warn('[Blue] Received invalid game state, preserving current state');
+        return null;
+      }
     } catch (error) {
       console.error('Failed to load game state:', error);
+      // Don't update state on error - preserve current state to prevent flickering
       setLoading(false);
       return null;
+    } finally {
+      isLoadingGameStateRef.current = false;
     }
   };
 
@@ -196,7 +237,7 @@ export default function Blue() {
         const state = await loadGameState();
         await loadScore();
         // If game is not running, we're done loading (no scenario to load)
-        if (state && state.status !== 'running') {
+        if (state && state.status !== GameStatus.RUNNING && String(state.status) !== 'running') {
           setLoading(false);
         }
         // If game is running, scenario loading will be handled by the scenario loading effect
@@ -260,12 +301,19 @@ export default function Blue() {
         
         // Only load scenario if game is running and scenario changed
         // Also clear scenario if game is not running
-        if (state.status === 'running' && state.current_scenario_id && scenarioChanged && (!currentScenario || currentScenario.id !== state.current_scenario_id)) {
+        const isRunning = state.status === GameStatus.RUNNING || String(state.status) === 'running';
+        const isLobby = state.status === GameStatus.LOBBY || String(state.status) === 'lobby';
+        
+        if (isRunning && state.current_scenario_id && scenarioChanged && (!currentScenario || currentScenario.id !== state.current_scenario_id)) {
           loadScenario(state.current_scenario_id).catch(err => console.error('[Blue] Failed to load scenario:', err));
-        } else if (state.status !== 'running' && currentScenario) {
-          // Game stopped - clear scenario
-          console.log('[Blue] Game not running, clearing scenario. Status:', state.status);
-          setCurrentScenario(null);
+        } else if (!isRunning && currentScenario) {
+          // Game stopped - clear scenario, but only if it's not a stale lobby response
+          if (!isLobby || !hasSeenRunning) {
+            console.log('[Blue] Game not running, clearing scenario. Status:', state.status);
+            setCurrentScenario(null);
+          } else {
+            console.log('[Blue] Ignoring scenario clear - game was running and status is likely stale');
+          }
         }
       } catch (err) {
         console.error('[Blue] Failed to refresh game state:', err);
@@ -292,7 +340,8 @@ export default function Blue() {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     
     // Periodic refresh every 10 seconds (reduced from 5 to minimize updates)
-    const interval = setInterval(refreshGameState, 10000);
+    // Periodic refresh every 30 seconds (increased to reduce stale state issues)
+    const interval = setInterval(refreshGameState, 30000);
 
     return () => {
       clearInterval(interval);
@@ -312,14 +361,23 @@ export default function Blue() {
     // Update ref
     prevStatusRef.current = gameState.status;
     
-    if (gameState.status === 'running') {
+    const isRunning = gameState.status === GameStatus.RUNNING || String(gameState.status) === 'running';
+    const isLobby = gameState.status === GameStatus.LOBBY || String(gameState.status) === 'lobby';
+    const isFinished = gameState.status === GameStatus.FINISHED || String(gameState.status) === 'finished';
+    
+    if (isRunning) {
       if (!hasSeenRunning) {
         setHasSeenRunning(true);
       }
-    } else if (statusChanged && (gameState.status === 'lobby' || gameState.status === 'finished')) {
+    } else if (statusChanged && (isLobby || isFinished)) {
       // Only reset hasSeenRunning when status actually changes to lobby/finished
       // This prevents flickering from temporary state updates
-      setHasSeenRunning(false);
+      if (isLobby && hasSeenRunning && (currentScenario || gameState.current_scenario_id)) {
+        // Don't reset if we've seen it running and have a scenario - this is likely a stale response
+        console.log('[Blue] Ignoring lobby status change - game was previously running and scenario is still loaded');
+      } else {
+        setHasSeenRunning(false);
+      }
     }
   }, [gameState?.status, hasSeenRunning]);
 
@@ -342,7 +400,8 @@ export default function Blue() {
   // Don't load scenario if game is stopped/finished to prevent conflicts
   useEffect(() => {
     // Only load scenario if game is running and there's a scenario ID
-    if (gameState?.status === 'running' && gameState?.current_scenario_id) {
+    const isRunning = gameState?.status === GameStatus.RUNNING || String(gameState?.status) === 'running';
+    if (isRunning && gameState?.current_scenario_id) {
       // Reload scenario if it changed or if we don't have one loaded
       if (!currentScenario || currentScenario.id !== gameState.current_scenario_id) {
         console.log('[Blue] Scenario changed or not loaded:', {
@@ -356,11 +415,20 @@ export default function Blue() {
         // Scenario is already loaded and matches
         setLoading(false);
       }
-    } else if (gameState && (gameState.status !== 'running' || !gameState.current_scenario_id)) {
+    } else if (gameState) {
       // Game is not running or scenario was cleared - clear local scenario
-      if (currentScenario) {
-        console.log('[Blue] Game stopped or scenario cleared, clearing local scenario. Status:', gameState.status);
-        setCurrentScenario(null);
+      const isRunning = gameState.status === GameStatus.RUNNING || String(gameState.status) === 'running';
+      const isLobby = gameState.status === GameStatus.LOBBY || String(gameState.status) === 'lobby';
+      const shouldClear = !isRunning || !gameState.current_scenario_id;
+      
+      if (shouldClear && currentScenario) {
+        // Only clear if we haven't seen it running, or if it's not a stale lobby response
+        if (!hasSeenRunning || !isLobby) {
+          console.log('[Blue] Game stopped or scenario cleared, clearing local scenario. Status:', gameState.status);
+          setCurrentScenario(null);
+        } else {
+          console.log('[Blue] Ignoring scenario clear - game was running and status is likely stale');
+        }
       }
       setLoading(false);
     } else if (gameState) {
@@ -375,7 +443,7 @@ export default function Blue() {
   useEffect(() => {
     const resolvedEvents = events.filter(
       (e) =>
-        e.kind === 'attack_resolved' &&
+        (e.kind === EventKind.ATTACK_RESOLVED || String(e.kind) === 'attack_resolved') &&
         !e.payload.preliminary &&
         !processedBlockedEvents.current.has(e.id) &&
         (e.payload.result === 'blocked' ||
@@ -649,7 +717,7 @@ export default function Blue() {
             {(() => {
               // Calculate defense statistics from resolved attacks
               const resolvedAttacks = events.filter(
-                (e) => e.kind === 'attack_resolved' && !e.payload.preliminary
+                (e) => (e.kind === EventKind.ATTACK_RESOLVED || String(e.kind) === 'attack_resolved') && !e.payload.preliminary
               );
               
               const totalAttacks = resolvedAttacks.length;
@@ -798,8 +866,14 @@ export default function Blue() {
             {/* Action Identification Voting */}
             {(() => {
               const activeAttack = events.find(
-                e => (e.kind === 'attack_launched' || e.kind === 'ATTACK_LAUNCHED') && 
-                !events.some(e2 => e2.kind === 'attack_resolved' && e2.payload?.attack_id === e.payload?.attack_id)
+                e => {
+                  const kind = e.kind as string;
+                  return (kind === 'attack_launched' || kind === 'ATTACK_LAUNCHED' || kind === EventKind.ATTACK_LAUNCHED) && 
+                         !events.some(e2 => {
+                           const e2Kind = e2.kind as string;
+                           return (e2Kind === 'attack_resolved' || e2Kind === EventKind.ATTACK_RESOLVED) && e2.payload?.attack_id === e.payload?.attack_id;
+                         });
+                }
               );
               if (activeAttack) {
                 return (
@@ -833,16 +907,20 @@ export default function Blue() {
                   // const attackEvents = events.filter((e) => e.kind === 'attack_launched' || e.kind === 'attack_resolved');
                   // console.log('[Blue] Attack events in store:', attackEvents.length);
                   
-                  const attackEvents = events.filter((e) => e.kind === 'attack_launched' || e.kind === 'attack_resolved');
+                  const attackEvents = events.filter((e) => {
+                    const kind = e.kind as string;
+                    return kind === 'attack_launched' || kind === 'attack_resolved' || kind === EventKind.ATTACK_LAUNCHED || kind === EventKind.ATTACK_RESOLVED;
+                  });
                   attackEvents.forEach((event) => {
                     const attackId = event.payload?.attack_id || event.payload?.attackId || 'unknown';
                     if (!attackMap.has(attackId)) {
                       attackMap.set(attackId, {});
                     }
                     const entry = attackMap.get(attackId)!;
-                    if (event.kind === 'attack_launched' || event.kind === 'ATTACK_LAUNCHED') {
+                    const kind = event.kind as string;
+                    if (kind === 'attack_launched' || kind === 'ATTACK_LAUNCHED' || kind === EventKind.ATTACK_LAUNCHED) {
                       entry.launched = event;
-                    } else if ((event.kind === 'attack_resolved' || event.kind === 'ATTACK_RESOLVED') && !event.payload?.preliminary) {
+                    } else if ((kind === 'attack_resolved' || kind === 'ATTACK_RESOLVED' || kind === EventKind.ATTACK_RESOLVED) && !event.payload?.preliminary) {
                       entry.resolved = event;
                     }
                   });
@@ -850,8 +928,8 @@ export default function Blue() {
                   // Convert to array and sort by most recent
                   const attackEntries = Array.from(attackMap.entries())
                     .map(([attackId, entry]) => {
-                      const launchedTs = entry.launched?.ts || entry.launched?.timestamp;
-                      const resolvedTs = entry.resolved?.ts || entry.resolved?.timestamp;
+                      const launchedTs = entry.launched?.ts;
+                      const resolvedTs = entry.resolved?.ts;
                       const timestamp = resolvedTs || launchedTs || new Date().toISOString();
                       return {
                         attackId,
@@ -860,7 +938,11 @@ export default function Blue() {
                         timestamp: typeof timestamp === 'string' ? new Date(timestamp) : timestamp,
                       };
                     })
-                    .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+                    .sort((a, b) => {
+                      const timeA = a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp as string).getTime();
+                      const timeB = b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp as string).getTime();
+                      return timeB - timeA;
+                    })
                     .slice(0, 5);
                   
                   // Show "No attacks" message if there are no attack entries

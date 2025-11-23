@@ -55,9 +55,9 @@ export default function RedBriefing({ briefing, onDismiss }: RedBriefingProps) {
   };
 
   useEffect(() => {
-    let translateInterval: NodeJS.Timeout | null = null;
-    let typeInterval: NodeJS.Timeout | null = null;
-    let timer: NodeJS.Timeout | null = null;
+    let translateInterval: ReturnType<typeof setTimeout> | null = null;
+    let typeInterval: ReturnType<typeof setTimeout> | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     
     // Start with Cyrillic text
     if (briefing.cyrillicText) {

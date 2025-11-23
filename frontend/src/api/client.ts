@@ -54,13 +54,42 @@ api.interceptors.request.use((config) => {
 
 export const scenariosApi = {
   list: async (): Promise<Scenario[]> => {
-    const { data } = await api.get('/scenarios');
-    return data;
+    const baseURL = getApiBaseUrl();
+    console.log('[scenariosApi] Calling list with baseURL:', baseURL);
+    try {
+      const { data } = await api.get('/scenarios');
+      console.log('[scenariosApi] Received scenarios:', data?.length || 0);
+      return data;
+    } catch (error: any) {
+      console.error('[scenariosApi] Error loading scenarios:', {
+        message: error?.message,
+        response: error?.response?.data,
+        status: error?.response?.status,
+        url: error?.config?.url,
+        baseURL: error?.config?.baseURL,
+        fullURL: error?.config?.baseURL + error?.config?.url,
+      });
+      throw error;
+    }
   },
   
   get: async (id: string): Promise<Scenario> => {
-    const { data } = await api.get(`/scenarios/${id}`);
-    return data;
+    const baseURL = getApiBaseUrl();
+    console.log('[scenariosApi] Calling get with baseURL:', baseURL, 'id:', id);
+    try {
+      const { data } = await api.get(`/scenarios/${id}`);
+      console.log('[scenariosApi] Received scenario:', data?.id);
+      return data;
+    } catch (error: any) {
+      console.error('[scenariosApi] Error loading scenario:', {
+        message: error?.message,
+        response: error?.response?.data,
+        status: error?.response?.status,
+        url: error?.config?.url,
+        baseURL: error?.config?.baseURL,
+      });
+      throw error;
+    }
   },
 };
 

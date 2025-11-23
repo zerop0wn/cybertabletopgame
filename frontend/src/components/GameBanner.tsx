@@ -50,9 +50,8 @@ function GameBanner() {
     
     // Subscribe to keep it updated
     const unsubscribe = useGameStore.subscribe(
-      (state) => state.gameState,
-      (gameState) => {
-        gameStateRef.current = gameState;
+      (state) => {
+        gameStateRef.current = state.gameState;
       }
     );
     return unsubscribe;

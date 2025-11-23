@@ -1,6 +1,6 @@
 /** Zustand store for game state. */
 import { create } from 'zustand';
-import { Event, GameState, Scenario, Score, Alert, BlueAction } from '../api/types';
+import { Event, GameState, Scenario, Score, Alert, BlueAction, GameStatus } from '../api/types';
 import { persist } from 'zustand/middleware';
 
 interface GameStore {
@@ -72,9 +72,140 @@ export const useGameStore = create<GameStore>()(
       setSessionId: (sessionId) => set({ sessionId }),
       setSession: (session) => set({ session }),
       setGameState: (state) => set((currentState) => {
+        // Prevent unnecessary updates by comparing state
+        // Only update if state actually changed (shallow comparison of key fields)
+        if (currentState.gameState) {
+          const current = currentState.gameState;
+          const newState = state;
+          
+          // CRITICAL: If game was running and new state shows 'lobby' or 'finished' with lower round, this is likely stale
+          // Check if we have indicators that the game is actually still running (scenario ID, round, etc.)
+          const gameWasRunning = current.status === GameStatus.RUNNING;
+          const hasRunningIndicators = current.current_scenario_id || current.round || current.start_time;
+          const newStateShowsLobby = newState.status === GameStatus.LOBBY || String(newState.status) === 'lobby';
+          const newStateShowsFinished = newState.status === GameStatus.FINISHED || String(newState.status) === 'finished';
+          
+          // If game was running and new state shows finished, check if it's a stale state (lower round number)
+          if (gameWasRunning && hasRunningIndicators && newStateShowsFinished) {
+            const currentRound = current.round || 0;
+            const newRound = newState.round || 0;
+            // If new state has a lower round number, it's from a previous game - ignore it
+            if (newRound < currentRound) {
+              console.warn('[Store] Ignoring stale finished status - current round', currentRound, 'new round', newRound);
+              const preservedState = { 
+                ...newState, 
+                status: GameStatus.RUNNING,
+                // Preserve critical running state fields
+                current_turn: newState.current_turn || current.current_turn,
+                turn_start_time: newState.turn_start_time || current.turn_start_time,
+                start_time: newState.start_time || current.start_time,
+                current_scenario_id: newState.current_scenario_id || current.current_scenario_id,
+                round: current.round, // Keep current round, not the stale one
+                // Preserve scan fields
+                red_scan_completed: newState.red_scan_completed ?? current.red_scan_completed,
+                red_scan_success: newState.red_scan_success ?? current.red_scan_success,
+                red_scan_tool: newState.red_scan_tool || current.red_scan_tool,
+                red_scan_results: newState.red_scan_results || current.red_scan_results,
+              };
+              return { gameState: preservedState };
+            }
+          }
+          
+          if (gameWasRunning && hasRunningIndicators && newStateShowsLobby) {
+            // Game was running with clear indicators, but new state shows lobby - this is stale
+            // Preserve running status and merge other fields
+            console.warn('[Store] Ignoring stale lobby status - game was running with scenario/round');
+            const preservedState = { 
+              ...newState, 
+              status: GameStatus.RUNNING,
+              // Preserve critical running state fields
+              current_turn: newState.current_turn || current.current_turn,
+              turn_start_time: newState.turn_start_time || current.turn_start_time,
+              start_time: newState.start_time || current.start_time,
+              current_scenario_id: newState.current_scenario_id || current.current_scenario_id,
+              round: newState.round || current.round,
+              // Preserve scan fields
+              red_scan_completed: newState.red_scan_completed ?? current.red_scan_completed,
+              red_scan_success: newState.red_scan_success ?? current.red_scan_success,
+              red_scan_tool: newState.red_scan_tool || current.red_scan_tool,
+              red_scan_results: newState.red_scan_results || current.red_scan_results,
+            };
+            return { gameState: preservedState };
+          }
+          
+          // Quick check: if it's just a timer update and timer hasn't changed significantly, skip
+          // Timer updates every second, but we only need to update UI every 5 seconds to prevent flickering
+          if (current.status === newState.status && 
+              current.status === GameStatus.RUNNING &&
+              current.timer !== undefined && 
+              newState.timer !== undefined &&
+              Math.abs((current.timer || 0) - (newState.timer || 0)) < 5) {
+            // Check if only timer field changed by comparing key fields
+            const keyFields = ['status', 'current_turn', 'turn_start_time', 'start_time', 'current_scenario_id', 
+                              'red_scan_completed', 'red_scan_success', 'red_scan_tool',
+                              'red_vulnerability_identified', 'blue_ip_identified', 'blue_action_identified',
+                              'blue_investigation_completed', 'red_pivot_strategy_selected', 'red_attack_selected', 'round'];
+            const otherFieldsChanged = keyFields.some(field => current[field] !== newState[field]);
+            
+            if (!otherFieldsChanged) {
+              // Only timer changed by less than 5 seconds - skip update to prevent flickering
+              return currentState;
+            }
+          }
+          
+          // Check if state actually changed (compare key fields)
+          const keyFields = ['status', 'current_turn', 'turn_start_time', 'start_time', 'current_scenario_id', 'round'];
+          let hasSignificantChange = keyFields.some(field => current[field] !== newState[field]) ||
+            (current.timer !== undefined && newState.timer !== undefined && Math.abs((current.timer || 0) - (newState.timer || 0)) >= 5);
+          
+          // Check array/object fields for changes (only if they exist)
+          if (!hasSignificantChange) {
+            const currentScans = current.red_scan_results || [];
+            const newScans = newState.red_scan_results || [];
+            if (currentScans.length !== newScans.length) {
+              hasSignificantChange = true;
+            } else {
+              // Quick check: compare scan IDs
+              for (let i = 0; i < currentScans.length; i++) {
+                if (currentScans[i]?.scan_id !== newScans[i]?.scan_id) {
+                  hasSignificantChange = true;
+                  break;
+                }
+              }
+            }
+          }
+          
+          if (!hasSignificantChange && current.status === GameStatus.RUNNING && newState.status === GameStatus.RUNNING) {
+            // No significant change - preserve existing state to prevent flickering
+            return currentState;
+          }
+        }
+        
+        // IMPORTANT: If game was running and new state has invalid/missing status, preserve running status
+        // This prevents flickering when periodic refreshes temporarily return incomplete state
+        if (currentState.gameState && currentState.gameState.status === GameStatus.RUNNING) {
+          // Game was running - if new state shows 'lobby' or has invalid status, preserve running status
+          // 'lobby' status during a running game is likely a stale/incorrect response
+          const isValidStatus = state.status === GameStatus.RUNNING || state.status === GameStatus.PAUSED || state.status === GameStatus.FINISHED;
+          if (!state.status || state.status === GameStatus.LOBBY || String(state.status) === 'lobby' || !isValidStatus) {
+            // New state has invalid/missing/lobby status - preserve running status and merge other fields
+            const preservedState = { 
+              ...state, 
+              status: GameStatus.RUNNING,
+              // Preserve critical running state fields
+              current_turn: state.current_turn || currentState.gameState.current_turn,
+              turn_start_time: state.turn_start_time || currentState.gameState.turn_start_time,
+              start_time: state.start_time || currentState.gameState.start_time,
+              current_scenario_id: state.current_scenario_id || currentState.gameState.current_scenario_id,
+              round: state.round || currentState.gameState.round,
+            };
+            return { gameState: preservedState };
+          }
+        }
+        
         // Preserve scan fields if game is still running and new state doesn't have them
         // This prevents scan data from being lost during periodic refreshes
-        if (currentState.gameState && state.status === 'running' && currentState.gameState.status === 'running') {
+        if (currentState.gameState && state.status === GameStatus.RUNNING && currentState.gameState.status === GameStatus.RUNNING) {
           // Game is still running - preserve scan fields if they're not in the new state
           const preservedState = { ...state };
           if (currentState.gameState.red_scan_completed && !state.red_scan_completed) {

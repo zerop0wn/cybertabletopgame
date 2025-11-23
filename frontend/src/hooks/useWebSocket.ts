@@ -123,7 +123,7 @@ export function useWebSocket(role: 'gm' | 'red' | 'blue' | 'audience' | null) {
 
     socketRef.current = socket;
 
-    let joinTimeout: NodeJS.Timeout | null = null;
+    let joinTimeout: ReturnType<typeof setTimeout> | null = null;
 
     socket.on('connect', () => {
       // Reset error counters and connecting flag on successful connection
@@ -216,14 +216,21 @@ export function useWebSocket(role: 'gm' | 'red' | 'blue' | 'audience' | null) {
       }
       
       // Handle timer_update events separately - they update game state but shouldn't be in timeline
+      // Debounce timer updates to prevent flickering (only update every 5 seconds)
       if (event.kind === 'timer_update' || event.kind === 'TIMER_UPDATE') {
         if (store.gameState) {
           const timerValue = event.payload.timer || event.payload.elapsed || 0;
           const validTimer = Math.max(0, timerValue);
-          store.setGameState({
-            ...store.gameState,
-            timer: validTimer,
-          });
+          const currentTimer = store.gameState.timer || 0;
+          
+          // Only update if timer changed by more than 5 seconds to prevent flickering
+          // This reduces re-renders from every second to every 5 seconds
+          if (Math.abs(validTimer - currentTimer) >= 5 || validTimer === 0) {
+            store.setGameState({
+              ...store.gameState,
+              timer: validTimer,
+            });
+          }
         }
         // Don't add timer_update events to the timeline - they're too frequent and not meaningful
         return; // Early return to skip adding to timeline
@@ -291,7 +298,7 @@ export function useWebSocket(role: 'gm' | 'red' | 'blue' | 'audience' | null) {
       }
       
       // Handle ip_identified events
-      if (event.kind === 'ip_identified' || event.kind === 'IP_IDENTIFIED') {
+      if (event.kind === EventKind.IP_IDENTIFIED || event.kind === 'ip_identified' || event.kind === 'IP_IDENTIFIED') {
         if (store.gameState) {
           const votes = event.payload?.votes || {};  // Full votes dict (player_name -> ip)
           const totalVotes = event.payload?.total_votes || 0;
@@ -306,7 +313,7 @@ export function useWebSocket(role: 'gm' | 'red' | 'blue' | 'audience' | null) {
       }
       
       // Handle action_identified events
-      if (event.kind === 'action_identified' || event.kind === 'ACTION_IDENTIFIED') {
+      if (event.kind === EventKind.ACTION_IDENTIFIED || event.kind === 'action_identified' || event.kind === 'ACTION_IDENTIFIED') {
         if (store.gameState) {
           const votes = event.payload?.votes || {};  // Full votes dict (player_name -> action_type)
           const totalVotes = event.payload?.total_votes || 0;
@@ -321,7 +328,7 @@ export function useWebSocket(role: 'gm' | 'red' | 'blue' | 'audience' | null) {
       }
       
       // Handle investigation_completed events
-      if (event.kind === 'investigation_completed' || event.kind === 'INVESTIGATION_COMPLETED') {
+      if (event.kind === EventKind.INVESTIGATION_COMPLETED || event.kind === 'investigation_completed' || event.kind === 'INVESTIGATION_COMPLETED') {
         if (store.gameState) {
           const votes = event.payload?.votes || {};  // Full votes dict (player_name -> attack_status)
           const totalVotes = event.payload?.total_votes || 0;
@@ -336,7 +343,7 @@ export function useWebSocket(role: 'gm' | 'red' | 'blue' | 'audience' | null) {
       }
       
       // Handle pivot_strategy_selected events
-      if (event.kind === 'pivot_strategy_selected' || event.kind === 'PIVOT_STRATEGY_SELECTED') {
+      if (event.kind === EventKind.PIVOT_STRATEGY_SELECTED || event.kind === 'pivot_strategy_selected' || event.kind === 'PIVOT_STRATEGY_SELECTED') {
         if (store.gameState) {
           const votes = event.payload?.votes || {};  // Full votes dict (player_name -> pivot_strategy)
           const totalVotes = event.payload?.total_votes || 0;
@@ -351,7 +358,7 @@ export function useWebSocket(role: 'gm' | 'red' | 'blue' | 'audience' | null) {
       }
       
       // Handle attack_selected events
-      if (event.kind === 'attack_selected' || event.kind === 'ATTACK_SELECTED') {
+      if (event.kind === EventKind.ATTACK_SELECTED || event.kind === 'attack_selected' || event.kind === 'ATTACK_SELECTED') {
         if (store.gameState) {
           const votes = event.payload?.votes || {};  // Full votes dict (player_name -> attack_id)
           const totalVotes = event.payload?.total_votes || 0;
@@ -368,13 +375,16 @@ export function useWebSocket(role: 'gm' | 'red' | 'blue' | 'audience' | null) {
       // Add events to the events array for timeline display (excluding timer_update which we handled above)
       store.addEvent(event);
       // Only log important events to reduce console noise
-      if (event.kind === 'attack_launched' || event.kind === 'attack_resolved' || 
-          event.kind === 'round_started' || event.kind === 'round_ended' ||
-          event.kind === 'turn_changed' || event.kind === 'action_taken') {
+      if (event.kind === EventKind.ATTACK_LAUNCHED || event.kind === 'attack_launched' ||
+          event.kind === EventKind.ATTACK_RESOLVED || event.kind === 'attack_resolved' ||
+          event.kind === EventKind.ROUND_STARTED || event.kind === 'round_started' ||
+          event.kind === EventKind.ROUND_ENDED || event.kind === 'round_ended' ||
+          event.kind === EventKind.TURN_CHANGED || event.kind === 'turn_changed' ||
+          event.kind === EventKind.ACTION_TAKEN || event.kind === 'action_taken') {
         const updatedStore = useGameStore.getState();
         console.log('[WebSocket] Event received:', event.kind, 'Total events:', updatedStore.events.length);
       }
-      if (event.kind === 'attack_launched' || event.kind === 'ATTACK_LAUNCHED') {
+      if (event.kind === EventKind.ATTACK_LAUNCHED || event.kind === 'attack_launched' || event.kind === 'ATTACK_LAUNCHED') {
         console.log('[WebSocket] attack_launched event received - attack_id:', event.payload?.attack_id, 'attack_type:', event.payload?.attack_type, 'from:', event.payload?.from, 'to:', event.payload?.to);
       }
       if (event.kind === 'attack_resolved') {
@@ -388,15 +398,17 @@ export function useWebSocket(role: 'gm' | 'red' | 'blue' | 'audience' | null) {
         case 'alert_emitted':
           // Always add alerts - they're filtered by role when displayed
           const alertData = event.payload as unknown as Alert;
-          // Convert timestamp string to Date if needed
-          if (typeof alertData.timestamp === 'string') {
-            alertData.timestamp = new Date(alertData.timestamp);
-          } else if (alertData.timestamp && typeof alertData.timestamp === 'object' && 'toISOString' in alertData.timestamp) {
-            // Already a Date object, ensure it's a Date instance
-            alertData.timestamp = new Date(alertData.timestamp);
-          }
+          // Ensure timestamp is a string (Alert interface expects string)
+          const alertWithTimestamp: Alert = { 
+            ...alertData,
+            timestamp: typeof alertData.timestamp === 'string' 
+              ? alertData.timestamp 
+              : (alertData.timestamp && typeof alertData.timestamp === 'object' && 'toISOString' in alertData.timestamp
+                  ? (alertData.timestamp as Date).toISOString()
+                  : new Date().toISOString())
+          };
           console.log('[WebSocket] Received alert:', alertData.id, alertData.source, alertData.severity);
-          store.addAlert(alertData);
+          store.addAlert(alertWithTimestamp);
           break;
 
         case EventKind.ACTION_TAKEN:
@@ -412,7 +424,15 @@ export function useWebSocket(role: 'gm' | 'red' | 'blue' | 'audience' | null) {
 
         case EventKind.SCORE_UPDATE:
         case 'score_update':
-          store.setScore(event.payload);
+          // Ensure payload has required Score fields
+          const scorePayload = event.payload as any;
+          store.setScore({
+            red: scorePayload.red || 0,
+            blue: scorePayload.blue || 0,
+            mttd: scorePayload.mttd,
+            mttc: scorePayload.mttc,
+            round_breakdown: scorePayload.round_breakdown || []
+          });
           break;
         
         case EventKind.ROUND_STARTED:

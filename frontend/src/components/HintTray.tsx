@@ -9,7 +9,10 @@ export default function HintTray() {
   useEffect(() => {
     // Check for training hint events
     const hintEvents = events.filter(
-      (e) => e.kind === EventKind.TRAINING_HINT || e.kind === 'training_hint'
+      (e) => {
+        const kind = e.kind as string;
+        return kind === EventKind.TRAINING_HINT || kind === 'training_hint';
+      }
     );
     
     const hints = new Map<number, Hint>();

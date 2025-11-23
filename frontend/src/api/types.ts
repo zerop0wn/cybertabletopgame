@@ -247,7 +247,7 @@ export interface GameState {
 
 export interface Event {
   id: string;
-  kind: EventKind;
+  kind: EventKind | string;  // Allow string for flexibility with type narrowing
   ts: string;
   payload: Record<string, any>;
   

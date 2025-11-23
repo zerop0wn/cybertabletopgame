@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, memo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGameStore } from '../store/useGameStore';
 import { scenariosApi, attacksApi, gameApi, activityApi, playersApi } from '../api/client';
-import { Scenario, Attack, EventKind, Node, Link, Event, ScanResult } from '../api/types';
+import { Scenario, Attack, EventKind, Node, Link, Event, ScanResult, GameStatus } from '../api/types';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { codesOn } from '../lib/flags';
 import PewPewMap from '../components/PewPewMap';
@@ -56,6 +56,7 @@ export default function Red() {
     success: boolean;
     tool: string | null;
   }>({ completed: false, success: false, tool: null }); // Stable reference for scan state
+  const isLoadingGameStateRef = useRef(false); // Track if we're currently loading game state
 
   // Define functions before they're used in useEffect hooks
   const loadScenarios = async () => {
@@ -70,16 +71,53 @@ export default function Red() {
   };
 
   const loadGameState = async () => {
+    // Prevent multiple simultaneous calls
+    if (isLoadingGameStateRef.current) {
+      console.log('[Red] loadGameState already in progress, skipping');
+      return useGameStore.getState().gameState;
+    }
+    
+    isLoadingGameStateRef.current = true;
     try {
       const state = await gameApi.getState();
-      const { setGameState } = useGameStore.getState();
-      setGameState(state);
-      console.log('[Red] Loaded game state:', state);
-      console.log('[Red] Scan results in loaded state:', state.red_scan_results?.length || 0, 'results');
-      return state;
+      // Only update state if we got a valid response
+      if (state && state.status) {
+        const { setGameState, gameState: currentState } = useGameStore.getState();
+        // If game was running and new state shows 'lobby' or 'finished' with lower round, this is likely stale
+        // Don't update to prevent flickering - the state management will handle this
+        const gameWasRunning = currentState && (currentState.status === GameStatus.RUNNING || String(currentState.status) === 'running');
+        const hasRunningIndicators = currentState && (currentState.current_scenario_id || currentState.round || currentState.start_time);
+        const newStateShowsLobby = state.status === GameStatus.LOBBY || String(state.status) === 'lobby';
+        const newStateShowsFinished = state.status === GameStatus.FINISHED || String(state.status) === 'finished';
+        
+        // Check if finished state is stale (lower round number)
+        if (gameWasRunning && hasRunningIndicators && newStateShowsFinished) {
+          const currentRound = currentState.round || 0;
+          const newRound = state.round || 0;
+          if (newRound < currentRound) {
+            console.warn('[Red] Received stale finished status (round', newRound, 'vs current', currentRound, ') - ignoring to prevent flickering');
+            return currentState;
+          }
+        }
+        
+        if (gameWasRunning && hasRunningIndicators && newStateShowsLobby) {
+          console.warn('[Red] Received lobby status while game is running - ignoring to prevent flickering');
+          return currentState;
+        }
+        setGameState(state);
+        console.log('[Red] Loaded game state:', state);
+        console.log('[Red] Scan results in loaded state:', state.red_scan_results?.length || 0, 'results');
+        return state;
+      } else {
+        console.warn('[Red] Received invalid game state, preserving current state');
+        return null;
+      }
     } catch (error) {
       console.error('[Red] Failed to load game state:', error);
+      // Don't update state on error - preserve current state to prevent flickering
       return null;
+    } finally {
+      isLoadingGameStateRef.current = false;
     }
   };
 
@@ -207,7 +245,7 @@ export default function Red() {
         const state = await loadGameState();
         await loadScenarios();
         // If game is not running, we're done loading (no scenario to load)
-        if (state && state.status !== 'running') {
+        if (state && state.status !== GameStatus.RUNNING && String(state.status) !== 'running') {
           setLoading(false);
         }
         // If game is running, scenario loading will be handled by the scenario loading effect
@@ -270,7 +308,10 @@ export default function Red() {
         }
         
         // Only load scenario if game is running and scenario changed
-        if (state.status === 'running' && state.current_scenario_id && scenarioChanged && (!currentScenario || currentScenario.id !== state.current_scenario_id)) {
+        // Also check currentState to avoid clearing scenario on stale 'lobby' responses
+        const isRunning = state.status === GameStatus.RUNNING || String(state.status) === 'running' || 
+                         (gameState && (gameState.status === GameStatus.RUNNING || String(gameState.status) === 'running'));
+        if (isRunning && state.current_scenario_id && scenarioChanged && (!currentScenario || currentScenario.id !== state.current_scenario_id)) {
           loadScenario(state.current_scenario_id).catch(err => console.error('[Red] Failed to load scenario:', err));
         }
       } catch (err) {
@@ -297,8 +338,8 @@ export default function Red() {
     
     document.addEventListener('visibilitychange', handleVisibilityChange);
     
-    // Periodic refresh every 10 seconds (reduced from 5 to minimize updates)
-    const interval = setInterval(refreshGameState, 10000);
+    // Periodic refresh every 30 seconds (increased to reduce stale state issues)
+    const interval = setInterval(refreshGameState, 30000);
 
     return () => {
       clearInterval(interval);
@@ -310,7 +351,8 @@ export default function Red() {
   // Don't load scenario if game is stopped/finished to prevent conflicts
   useEffect(() => {
     // Only load scenario if game is running and there's a scenario ID
-    if (gameState?.status === 'running' && gameState?.current_scenario_id) {
+    const isRunning = gameState?.status === GameStatus.RUNNING || String(gameState?.status) === 'running';
+    if (isRunning && gameState?.current_scenario_id) {
       // Reload scenario if it changed or if we don't have one loaded
       if (!currentScenario || currentScenario.id !== gameState.current_scenario_id) {
         console.log('[Red] Scenario changed or not loaded:', {
@@ -326,13 +368,23 @@ export default function Red() {
         }
         loadScenario(gameState.current_scenario_id);
       }
-    } else if (gameState && (gameState.status !== 'running' || !gameState.current_scenario_id)) {
+    } else if (gameState) {
       // Game is not running or scenario was cleared - clear local scenario
-      if (currentScenario) {
-        console.log('[Red] Game stopped or scenario cleared, clearing local scenario. Status:', gameState.status);
-        setCurrentScenario(null);
-        scanStateRef.current = { completed: false, success: false, tool: null };
-        setScanResult(null);
+      // Don't clear if we've seen it running and status is 'lobby' (prevents flickering from stale state)
+      const isRunning = gameState.status === GameStatus.RUNNING || String(gameState.status) === 'running';
+      const isLobby = gameState.status === GameStatus.LOBBY || String(gameState.status) === 'lobby';
+      const shouldClear = !isRunning || !gameState.current_scenario_id;
+      
+      if (shouldClear && currentScenario) {
+        // Only clear if we haven't seen it running, or if it's not a stale lobby response
+        if (!hasSeenRunning || !isLobby) {
+          console.log('[Red] Game stopped or scenario cleared, clearing local scenario. Status:', gameState.status);
+          setCurrentScenario(null);
+          scanStateRef.current = { completed: false, success: false, tool: null };
+          setScanResult(null);
+        } else {
+          console.log('[Red] Ignoring scenario clear - game was running and status is likely stale');
+        }
       }
     }
     // Only depend on current_scenario_id and status, not currentScenario to avoid reload loops
@@ -354,7 +406,11 @@ export default function Red() {
     prevStatusRef.current = gameState.status;
     prevRoundRef.current = gameState.round;
     
-    if (gameState.status === 'running') {
+    const isRunning = gameState.status === GameStatus.RUNNING || String(gameState.status) === 'running';
+    const isLobby = gameState.status === GameStatus.LOBBY || String(gameState.status) === 'lobby';
+    const isFinished = gameState.status === GameStatus.FINISHED || String(gameState.status) === 'finished';
+    
+    if (isRunning) {
       if (!hasSeenRunning) {
         setHasSeenRunning(true);
       }
@@ -364,11 +420,21 @@ export default function Red() {
         // New round detected - reset scan state
         scanStateRef.current = { completed: false, success: false, tool: null };
       }
-    } else if (statusChanged && (gameState.status === 'lobby' || gameState.status === 'finished')) {
+    } else if (statusChanged && (isLobby || isFinished)) {
       // Only reset hasSeenRunning when status actually changes to lobby/finished
-      // This prevents flickering from temporary state updates
-      setHasSeenRunning(false);
-      scanStateRef.current = { completed: false, success: false, tool: null };
+      // This prevents flickering when periodic refreshes temporarily show lobby
+      if (isLobby && hasSeenRunning) {
+        // Don't reset if we've seen it running - this is likely a stale response
+        // Also check if we have a scenario loaded - if so, game is still running
+        if (currentScenario || gameState.current_scenario_id) {
+          console.log('[Red] Ignoring lobby status change - game was previously running and scenario is still loaded');
+        } else {
+          console.log('[Red] Ignoring lobby status change - game was previously running');
+        }
+      } else {
+        setHasSeenRunning(false);
+        scanStateRef.current = { completed: false, success: false, tool: null };
+      }
     }
   }, [gameState?.status, gameState?.round, hasSeenRunning]);
 
@@ -416,7 +482,12 @@ export default function Red() {
       
       // Only reset scan state if game is explicitly reset (status changes to lobby/finished)
       // This allows the scan state to persist even if gameState temporarily doesn't have scan data
-      if (gameState.status === 'lobby' || gameState.status === 'finished') {
+      const isLobby = gameState.status === GameStatus.LOBBY || String(gameState.status) === 'lobby';
+      const isFinished = gameState.status === GameStatus.FINISHED || String(gameState.status) === 'finished';
+      
+      // Only clear if it's actually finished, or if it's lobby AND we haven't seen it running
+      // This prevents clearing scan state on stale lobby responses
+      if ((isFinished || (isLobby && !hasSeenRunning))) {
         // Game was reset - clear scan state
         if (scanStateRef.current.completed || scanStateRef.current.success || scanStateRef.current.tool) {
           scanStateRef.current.completed = false;
@@ -431,7 +502,7 @@ export default function Red() {
           completed: scanStateRef.current.completed,
           success: scanStateRef.current.success,
           tool: scanStateRef.current.tool,
-          reason: gameState.status === 'lobby' || gameState.status === 'finished' ? 'game reset' : 'scan data update',
+          reason: (gameState.status === GameStatus.LOBBY || String(gameState.status) === 'lobby' || gameState.status === GameStatus.FINISHED || String(gameState.status) === 'finished') ? 'game reset' : 'scan data update',
         });
       }
     }
@@ -617,8 +688,8 @@ export default function Red() {
         });
       }
       // Use string literals to avoid import issues
-      const attackLaunchedKind = EventKind?.ATTACK_LAUNCHED || 'attack_launched';
-      const attackResolvedKind = EventKind?.ATTACK_RESOLVED || 'attack_resolved';
+      const attackLaunchedKind: EventKind = EventKind.ATTACK_LAUNCHED;
+      const attackResolvedKind: EventKind = EventKind.ATTACK_RESOLVED;
       
       addEvent({
         id: `manual-${Date.now()}`,
@@ -1094,18 +1165,17 @@ export default function Red() {
                       <div className="space-y-2">
                         {events
                           .filter(
-                            (e) =>
-                              e.kind === EventKind?.ATTACK_LAUNCHED ||
-                              e.kind === 'attack_launched' ||
-                              e.kind === EventKind?.ATTACK_RESOLVED ||
-                              e.kind === 'attack_resolved' ||
-                              e.kind === EventKind?.ACTION_TAKEN ||
-                              e.kind === 'action_taken'
+                            (e) => {
+                              const kind = e.kind as string;
+                              return kind === EventKind.ATTACK_LAUNCHED || kind === 'attack_launched' ||
+                                     kind === EventKind.ATTACK_RESOLVED || kind === 'attack_resolved' ||
+                                     kind === EventKind.ACTION_TAKEN || kind === 'action_taken';
+                            }
                           )
                           .sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
                           .map((event) => {
                             // Handle action_taken events (Blue team responses)
-                            if (event.kind === 'action_taken' || event.kind === EventKind?.ACTION_TAKEN) {
+                            if ((event.kind as string) === 'action_taken' || event.kind === EventKind.ACTION_TAKEN) {
                               const actionType = event.payload.type?.replace(/_/g, ' ') || 'Unknown';
                               const target = event.payload.target || 'Unknown';
                               const note = event.payload.note || '';
@@ -1141,7 +1211,8 @@ export default function Red() {
                             }
                             
                             // Handle attack events
-                            const isResolved = event.kind === 'attack_resolved' || event.kind === EventKind?.ATTACK_RESOLVED;
+                            const kind = event.kind as string;
+                            const isResolved = kind === 'attack_resolved' || kind === EventKind.ATTACK_RESOLVED;
                             const result = event.payload.result;
                             const isBlocked = result === 'blocked';
                             const isPreliminary = event.payload.preliminary === true;
@@ -1224,11 +1295,12 @@ export default function Red() {
                                   const attackId = event.payload.attack_id;
                                   const attackTime = new Date(event.ts).getTime();
                                   const blueResponses = events
-                                    .filter(e => 
-                                      (e.kind === 'action_taken' || e.kind === EventKind?.ACTION_TAKEN) &&
-                                      new Date(e.ts).getTime() > attackTime &&
-                                      new Date(e.ts).getTime() < attackTime + 300000 // Within 5 minutes
-                                    )
+                                    .filter(e => {
+                                      const kind = e.kind as string;
+                                      return (kind === 'action_taken' || kind === EventKind.ACTION_TAKEN) &&
+                                             new Date(e.ts).getTime() > attackTime &&
+                                             new Date(e.ts).getTime() < attackTime + 300000; // Within 5 minutes
+                                    })
                                     .slice(0, 5); // Limit to 5 most recent
                                   
                                   if (blueResponses.length > 0) {
@@ -1261,7 +1333,10 @@ export default function Red() {
                               </div>
                             );
                           })}
-                        {events.filter((e) => e.kind === EventKind?.ATTACK_LAUNCHED || e.kind === 'attack_launched').length === 0 && (
+                        {events.filter((e) => {
+                          const kind = e.kind as string;
+                          return kind === 'attack_launched' || kind === EventKind.ATTACK_LAUNCHED;
+                        }).length === 0 && (
                           <div className="text-slate-400 text-center py-8">No attack history</div>
                         )}
                       </div>

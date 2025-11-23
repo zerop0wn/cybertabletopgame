@@ -7,7 +7,7 @@ import PewPewMap from '../components/PewPewMap';
 import ScorePanel from '../components/ScorePanel';
 import TimelineStrip from '../components/TimelineStrip';
 import GameBanner from '../components/GameBanner';
-import { Node, Link, Event } from '../api/types';
+import { Node, Link, Event, EventKind } from '../api/types';
 import { isPewPewAudienceEnabled, codesOn } from '../lib/flags';
 import AudiencePewPewMap from '../components/audience/PewPewMap';
 import StatusPill from '../components/ui/StatusPill';
@@ -200,9 +200,10 @@ export default function Audience() {
       const result = e.payload?.result;
       return result === 'hit' || result === 'unsuccessful_block' || result === 'unsuccessful_mitigation';
     }).length;
-    const defenseActions = events.filter(e => 
-      e.kind === 'action_taken' || e.kind === 'ACTION_TAKEN'
-    );
+    const defenseActions = events.filter(e => {
+      const kind = e.kind as string;
+      return kind === 'action_taken' || kind === 'ACTION_TAKEN' || kind === EventKind.ACTION_TAKEN;
+    });
 
     return (
       <div className="min-h-screen bg-slate-900 text-white">

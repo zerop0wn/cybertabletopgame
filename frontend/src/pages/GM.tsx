@@ -116,10 +116,25 @@ export default function GM() {
 
   const loadScenarios = async () => {
     try {
+      console.log('[GM] Loading scenarios...');
       const data = await scenariosApi.list();
-      setScenarios(data);
-    } catch (error) {
-      console.error('Failed to load scenarios:', error);
+      console.log('[GM] Scenarios loaded:', data?.length || 0, 'scenarios');
+      if (data && data.length > 0) {
+        setScenarios(data);
+      } else {
+        console.warn('[GM] No scenarios returned from API');
+      }
+    } catch (error: any) {
+      console.error('[GM] Failed to load scenarios:', error);
+      console.error('[GM] Error details:', {
+        message: error?.message,
+        response: error?.response?.data,
+        status: error?.response?.status,
+        url: error?.config?.url,
+        baseURL: error?.config?.baseURL,
+      });
+      // Set empty array on error so UI doesn't hang
+      setScenarios([]);
     } finally {
       setLoading(false);
     }
@@ -340,7 +355,7 @@ export default function GM() {
     setAuthToken(null);
     setSessionId(null);
     setSession(null);
-    setRole(null);
+    setRole(null as any);
     navigate('/', { replace: true });
   };
 

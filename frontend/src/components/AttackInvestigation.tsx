@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useGameStore } from '../store/useGameStore';
 import { gameApi } from '../api/client';
+import { EventKind } from '../api/types';
 
 interface AttackInvestigationProps {
   votes?: Record<string, string>;  // player_name -> "succeeded" or "blocked"
@@ -18,7 +19,10 @@ export default function AttackInvestigation({
 
   // Check if there's a resolved attack
   const resolvedAttack = events.find(
-    e => e.kind === 'attack_resolved' || e.kind === 'ATTACK_RESOLVED'
+    e => {
+      const kind = e.kind as string;
+      return kind === 'attack_resolved' || kind === 'ATTACK_RESOLVED' || kind === EventKind.ATTACK_RESOLVED;
+    }
   );
 
   // Available investigation options

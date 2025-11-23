@@ -22,16 +22,24 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - pewpew-network
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile.prod
       args:
-        - VITE_PUBLIC_BACKEND_URL=${VITE_PUBLIC_BACKEND_URL:-http://localhost:8000}
+        # Set to empty or relative URL since nginx will proxy to backend
+        - VITE_PUBLIC_BACKEND_URL=${VITE_PUBLIC_BACKEND_URL:-}
     ports:
       - "80:80"
     depends_on:
       - backend
     restart: unless-stopped
+    networks:
+      - pewpew-network
 
+networks:
+  pewpew-network:
+    driver: bridge

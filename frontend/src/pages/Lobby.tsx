@@ -33,7 +33,7 @@ export default function Lobby() {
         navigate('/gm');
       } else if (role === 'gm' && !authToken) {
         // Stale GM role without token - clear it
-        setRole(null);
+        setRole(null as any);
         setSessionId(null);
         setSession(null);
       }

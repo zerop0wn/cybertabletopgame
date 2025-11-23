@@ -1,31 +1,25 @@
 # AWS Deployment Guide
 
-This guide will help you deploy the CyberTabletop game to AWS for under $30/month, supporting up to 20 players plus GM and audience.
+This guide will help you deploy the CyberTabletop game to AWS using a single EC2 instance with Docker Compose.
 
 ## Architecture Overview
 
-- **Frontend**: Served via nginx in Docker container (or S3 + CloudFront for even lower cost)
+- **Frontend**: Served via nginx in Docker container
 - **Backend**: FastAPI + Socket.IO running in Docker container
 - **Compute**: EC2 t3.micro or t3.small instance
 - **Storage**: Local SQLite database (no additional cost)
+- **Networking**: Single public IP with security group controls
 
 ## Cost Breakdown
 
-### Option 1: Single EC2 Instance (Recommended)
+### EC2 Instance Deployment
 - **EC2 t3.micro** (1 vCPU, 1GB RAM): ~$7-8/month (1-year reserved) or ~$8-10/month (on-demand)
 - **EC2 t3.small** (2 vCPU, 2GB RAM): ~$14-15/month (1-year reserved) or ~$16-18/month (on-demand)
 - **EBS Storage** (20GB): ~$2/month
 - **Data Transfer**: First 100GB free, then ~$0.09/GB
 - **Total**: ~$9-20/month
 
-### Option 2: EC2 + S3/CloudFront (Better Performance)
-- **EC2 t3.micro**: ~$8-10/month
-- **S3 Storage** (1GB): ~$0.023/month
-- **CloudFront** (first 1TB free tier): ~$0/month
-- **EBS Storage**: ~$2/month
-- **Total**: ~$10-12/month
-
-Both options are well under the $30/month budget!
+This is a simple, cost-effective deployment that's easy to manage and allows you to leverage security groups for access control.
 
 ## Prerequisites
 
@@ -73,18 +67,24 @@ sudo chown -R $USER:$USER cybertabletopgame
 cd cybertabletopgame
 ```
 
-### 4. Run Deployment Script
+### 4. Deploy Using CloudFormation (Recommended)
+
+Use the provided CloudFormation template for automated setup:
 
 ```bash
-chmod +x aws/deploy.sh
-./aws/deploy.sh
+# From your local machine with AWS CLI configured
+cd aws
+aws cloudformation create-stack \
+  --stack-name pewpew-ec2 \
+  --template-body file://cloudformation-ec2-simple.yaml \
+  --parameters ParameterKey=KeyPairName,ParameterValue=your-key-pair-name \
+  --capabilities CAPABILITY_NAMED_IAM
+
+# Or use the PowerShell script
+.\deploy-ec2.ps1
 ```
 
-The script will:
-- Install Docker and Docker Compose
-- Set up the application
-- Create environment variables
-- Build and start containers
+Alternatively, see `EC2-DEPLOYMENT-GUIDE.md` or `DEPLOY-ON-EC2.md` for manual setup instructions.
 
 ### 5. Configure Environment Variables
 
@@ -114,29 +114,12 @@ If you have a domain:
 2. **Update VITE_PUBLIC_BACKEND_URL**: Change to `http://yourdomain.com:8000` or use a reverse proxy
 3. **Set up SSL** (recommended): Use Let's Encrypt with nginx reverse proxy
 
-## Using S3 + CloudFront for Frontend (Optional)
+## Quick Start
 
-For even better performance and lower cost:
-
-1. **Build frontend**:
-   ```bash
-   cd frontend
-   npm install
-   npm run build
-   ```
-
-2. **Upload to S3**:
-   ```bash
-   aws s3 sync dist/ s3://your-bucket-name --delete
-   ```
-
-3. **Configure CloudFront**:
-   - Create CloudFront distribution
-   - Origin: Your S3 bucket
-   - Default root object: `index.html`
-   - Error pages: 404 → `/index.html` (for SPA routing)
-
-4. **Update backend CORS** to allow CloudFront domain
+For the fastest deployment, see:
+- `DEPLOY-ON-EC2.md` - Quick deploy commands
+- `EC2-DEPLOYMENT-GUIDE.md` - Detailed manual setup
+- `MANUAL-EC2-SETUP.md` - Step-by-step manual configuration
 
 ## Security Considerations
 
@@ -150,26 +133,28 @@ For even better performance and lower cost:
 
 ### View Logs
 ```bash
-cd /opt/cybertabletop
-docker-compose -f docker-compose.prod.yml logs -f
+cd ~/cybertabletopgame
+sudo docker-compose -f docker-compose.prod.yml logs -f
 ```
 
 ### Restart Services
 ```bash
-docker-compose -f docker-compose.prod.yml restart
+cd ~/cybertabletopgame
+sudo docker-compose -f docker-compose.prod.yml restart
 ```
 
 ### Update Application
 ```bash
-cd /opt/cybertabletop
+cd ~/cybertabletopgame  # or wherever you cloned the repo
 git pull
-docker-compose -f docker-compose.prod.yml build
-docker-compose -f docker-compose.prod.yml up -d
+sudo docker-compose -f docker-compose.prod.yml build
+sudo docker-compose -f docker-compose.prod.yml up -d
 ```
 
 ### Backup Data
 ```bash
 # Backup SQLite database
+cd ~/cybertabletopgame
 cp backend/data/game.db backend/data/game.db.backup.$(date +%Y%m%d)
 ```
 
@@ -178,22 +163,25 @@ cp backend/data/game.db backend/data/game.db.backup.$(date +%Y%m%d)
 For 20+ concurrent players:
 
 1. **Use t3.small** instead of t3.micro for better performance
-2. **Increase uvicorn workers** in `Dockerfile.prod`:
+2. **Increase uvicorn workers** in `backend/Dockerfile.prod`:
    ```dockerfile
    CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
    ```
-3. **Enable CloudFront** for frontend to reduce server load
-4. **Monitor CloudWatch** metrics for CPU and memory usage
+3. **Monitor CloudWatch** metrics for CPU and memory usage
+4. **Adjust Docker resources** if needed (memory limits, CPU shares)
 
 ## Troubleshooting
 
 ### Services won't start
 ```bash
 # Check logs
-docker-compose -f docker-compose.prod.yml logs
+cd ~/cybertabletopgame
+sudo docker-compose -f docker-compose.prod.yml logs
 
 # Check if ports are in use
 sudo netstat -tulpn | grep -E ':(80|8000)'
+# or
+sudo ss -tulpn | grep -E ':(80|8000)'
 ```
 
 ### Can't access from browser
@@ -210,8 +198,8 @@ sudo netstat -tulpn | grep -E ':(80|8000)'
 
 1. **Use Reserved Instances**: Save up to 40% with 1-year reserved instances
 2. **Stop when not in use**: Stop EC2 instance when not playing (only pay for storage)
-3. **Use S3 + CloudFront**: Offload frontend to reduce EC2 load
-4. **Monitor data transfer**: First 100GB/month is free, then $0.09/GB
+3. **Monitor data transfer**: First 100GB/month is free, then $0.09/GB
+4. **Use t3.micro** for development/testing, upgrade to t3.small only when needed
 
 ## Support
 

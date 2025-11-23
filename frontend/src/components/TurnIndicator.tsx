@@ -84,7 +84,23 @@ export default function TurnIndicator() {
 
   // Force update when gameState changes (to ensure we recalculate immediately)
   // This is especially important when the turn switches due to timeout
+  // But only update when turn actually changes, not on every state update
+  const prevTurnRef = useRef(gameState?.current_turn);
+  const prevTurnStartTimeRef = useRef(gameState?.turn_start_time);
+  
   useEffect(() => {
+    const turnChanged = gameState?.current_turn !== prevTurnRef.current;
+    const turnStartTimeChanged = gameState?.turn_start_time !== prevTurnStartTimeRef.current;
+    
+    // Only update if turn or turn_start_time actually changed
+    if (!turnChanged && !turnStartTimeChanged) {
+      return; // Skip update to prevent flickering
+    }
+    
+    // Update refs
+    prevTurnRef.current = gameState?.current_turn;
+    prevTurnStartTimeRef.current = gameState?.turn_start_time;
+    
     if (gameState?.status === 'running' && gameState?.current_turn && gameState?.turn_start_time) {
       try {
         const now = new Date().getTime();
@@ -106,17 +122,41 @@ export default function TurnIndicator() {
           const elapsed = Math.floor((now - start) / 1000);
           const remaining = Math.max(0, turnTimeLimit - elapsed);
           // Immediately update when turn changes (reset to full time if turn just switched)
-          setTurnTimeRemaining(remaining);
+          setTurnTimeRemaining(prev => {
+            // Only update if value actually changed
+            if (prev !== remaining) {
+              return remaining;
+            }
+            return prev;
+          });
         } else if (start > now) {
           // Timezone issue - set to full time limit
           console.warn('[TurnIndicator] turn_start_time in future, using full time limit');
-          setTurnTimeRemaining(turnTimeLimit);
+          setTurnTimeRemaining(prev => {
+            if (prev !== turnTimeLimit) {
+              return turnTimeLimit;
+            }
+            return prev;
+          });
         }
       } catch (e) {
         console.error('[TurnIndicator] Error in force update:', e);
+        const limit = gameState.turn_time_limit || TURN_TIME_LIMIT;
+        setTurnTimeRemaining(prev => {
+          if (prev !== limit) {
+            return limit;
+          }
+          return prev;
+        });
       }
     } else {
-      setTurnTimeRemaining(gameState?.turn_time_limit || TURN_TIME_LIMIT);
+      const limit = gameState?.turn_time_limit || TURN_TIME_LIMIT;
+      setTurnTimeRemaining(prev => {
+        if (prev !== limit) {
+          return limit;
+        }
+        return prev;
+      });
     }
   }, [gameState?.status, gameState?.current_turn, gameState?.turn_start_time, gameState?.turn_time_limit]);
   

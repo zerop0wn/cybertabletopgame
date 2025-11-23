@@ -18,6 +18,7 @@ class GameEventBroadcaster:
             engineio_logger=False,
         )
         # Configure Socket.IO - socketio_path="/" because we mount at /socket.io in main.py
+        # Socket.IO will handle requests at /socket.io/ (root of mounted path)
         self.app = socketio.ASGIApp(self.sio, socketio_path="/")
         self.rooms = {
             "gm": [],
