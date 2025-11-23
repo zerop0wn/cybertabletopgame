@@ -7,6 +7,7 @@ const GameClock = memo(function GameClock() {
   const { gameState } = useGameStore();
   const [displayTime, setDisplayTime] = useState({ elapsed: 0, remaining: SCENARIO_DURATION_LIMIT });
   const gameStateRef = useRef(gameState);
+  const prevDisplayTimeRef = useRef({ elapsed: 0, remaining: SCENARIO_DURATION_LIMIT });
 
   // Keep ref updated with latest gameState
   useEffect(() => {
@@ -76,14 +77,14 @@ const GameClock = memo(function GameClock() {
     const updateTime = () => {
       const elapsed = calculateElapsed();
       const remaining = Math.max(0, SCENARIO_DURATION_LIMIT - elapsed);
-      setDisplayTime(prev => {
-        // Only update if values actually changed to avoid unnecessary re-renders
-        if (prev.elapsed !== elapsed || prev.remaining !== remaining) {
-          // Removed console.log to reduce noise - timer updates every second
-          return { elapsed, remaining };
-        }
-        return prev;
-      });
+      
+      // Only update if values changed significantly (2+ seconds) to prevent flickering
+      const elapsedChanged = Math.abs(prevDisplayTimeRef.current.elapsed - elapsed) >= 2;
+      const remainingChanged = Math.abs(prevDisplayTimeRef.current.remaining - remaining) >= 2;
+      if (elapsedChanged || remainingChanged) {
+        prevDisplayTimeRef.current = { elapsed, remaining };
+        setDisplayTime({ elapsed, remaining });
+      }
     };
 
     // Initial update

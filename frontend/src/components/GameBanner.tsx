@@ -61,6 +61,10 @@ function GameBanner() {
   const [gameTimeRemaining, setGameTimeRemaining] = useState(SCENARIO_DURATION_LIMIT);
   const [turnTimeRemaining, setTurnTimeRemaining] = useState(TURN_TIME_LIMIT);
   
+  // Use refs to track previous display values to prevent unnecessary updates
+  const prevGameTimeRef = useRef(SCENARIO_DURATION_LIMIT);
+  const prevTurnTimeRef = useRef(TURN_TIME_LIMIT);
+  
   // Calculate effective turn time limit (must be defined before use in useEffect)
   const effectiveTurnTimeLimit = turnTimeLimit || TURN_TIME_LIMIT;
 
@@ -185,10 +189,18 @@ function GameBanner() {
       const gameRemaining = calculateGameTime();
       const turnRemaining = calculateTurnTime();
       
-      // Update state - always update to ensure countdown works
-      // React will batch updates and prevent unnecessary re-renders
-      setGameTimeRemaining(gameRemaining);
-      setTurnTimeRemaining(turnRemaining);
+      // Only update state if values changed significantly (prevent flickering)
+      // Update game time only if changed by 2+ seconds
+      if (Math.abs(prevGameTimeRef.current - gameRemaining) >= 2) {
+        prevGameTimeRef.current = gameRemaining;
+        setGameTimeRemaining(gameRemaining);
+      }
+      
+      // Update turn time only if changed by 1+ second
+      if (Math.abs(prevTurnTimeRef.current - turnRemaining) >= 1) {
+        prevTurnTimeRef.current = turnRemaining;
+        setTurnTimeRemaining(turnRemaining);
+      }
     };
 
     // Initial update
@@ -239,24 +251,38 @@ function GameBanner() {
           
           if (!isNaN(start) && start <= now) {
             const elapsed = Math.floor((now - start) / 1000);
-            setGameTimeRemaining(Math.max(0, SCENARIO_DURATION_LIMIT - elapsed));
+            const newGameTime = Math.max(0, SCENARIO_DURATION_LIMIT - elapsed);
+            if (Math.abs(prevGameTimeRef.current - newGameTime) >= 2) {
+              prevGameTimeRef.current = newGameTime;
+              setGameTimeRemaining(newGameTime);
+            }
           } else if (gameState.timer !== undefined && gameState.timer !== null) {
             // Fallback to backend timer
             const elapsed = Math.max(0, Math.min(gameState.timer, SCENARIO_DURATION_LIMIT));
-            setGameTimeRemaining(Math.max(0, SCENARIO_DURATION_LIMIT - elapsed));
+            const newGameTime = Math.max(0, SCENARIO_DURATION_LIMIT - elapsed);
+            if (Math.abs(prevGameTimeRef.current - newGameTime) >= 2) {
+              prevGameTimeRef.current = newGameTime;
+              setGameTimeRemaining(newGameTime);
+            }
           }
         } catch (e) {
           // Fallback to backend timer on error
           if (gameState.timer !== undefined && gameState.timer !== null) {
             const elapsed = Math.max(0, Math.min(gameState.timer, SCENARIO_DURATION_LIMIT));
-            setGameTimeRemaining(Math.max(0, SCENARIO_DURATION_LIMIT - elapsed));
+            const newGameTime = Math.max(0, SCENARIO_DURATION_LIMIT - elapsed);
+            if (Math.abs(prevGameTimeRef.current - newGameTime) >= 2) {
+              prevGameTimeRef.current = newGameTime;
+              setGameTimeRemaining(newGameTime);
+            }
           }
         }
       } else if (!gameState?.start_time && gameState.timer !== undefined && gameState.timer !== null) {
         // Fallback to backend timer if start_time is not available
         if (prevStartTimeRef.current === null) {
           const elapsed = Math.max(0, Math.min(gameState.timer, SCENARIO_DURATION_LIMIT));
-          setGameTimeRemaining(Math.max(0, SCENARIO_DURATION_LIMIT - elapsed));
+          const newGameTime = Math.max(0, SCENARIO_DURATION_LIMIT - elapsed);
+          prevGameTimeRef.current = newGameTime;
+          setGameTimeRemaining(newGameTime);
           prevStartTimeRef.current = ''; // Mark as initialized
         }
       }
@@ -290,15 +316,25 @@ function GameBanner() {
             
             if (!isNaN(start) && start <= now) {
               const elapsed = Math.floor((now - start) / 1000);
-              setTurnTimeRemaining(Math.max(0, effectiveLimit - elapsed));
+              const newTurnTime = Math.max(0, effectiveLimit - elapsed);
+              if (Math.abs(prevTurnTimeRef.current - newTurnTime) >= 1) {
+                prevTurnTimeRef.current = newTurnTime;
+                setTurnTimeRemaining(newTurnTime);
+              }
             } else {
-              setTurnTimeRemaining(effectiveLimit);
+              if (Math.abs(prevTurnTimeRef.current - effectiveLimit) >= 1) {
+                prevTurnTimeRef.current = effectiveLimit;
+                setTurnTimeRemaining(effectiveLimit);
+              }
             }
           } catch (e) {
             setTurnTimeRemaining(effectiveLimit);
           }
         } else if (currentTurn && !turnStartTime) {
-          setTurnTimeRemaining(effectiveLimit);
+          if (Math.abs(prevTurnTimeRef.current - effectiveLimit) >= 1) {
+            prevTurnTimeRef.current = effectiveLimit;
+            setTurnTimeRemaining(effectiveLimit);
+          }
         }
       }
     } else {
@@ -306,6 +342,8 @@ function GameBanner() {
       prevStartTimeRef.current = null;
       prevTurnStartTimeRef.current = null;
       prevCurrentTurnRef.current = null;
+      prevGameTimeRef.current = SCENARIO_DURATION_LIMIT;
+      prevTurnTimeRef.current = effectiveTurnTimeLimit;
       setGameTimeRemaining(SCENARIO_DURATION_LIMIT);
       setTurnTimeRemaining(effectiveTurnTimeLimit);
     }
@@ -313,19 +351,29 @@ function GameBanner() {
 
   // Calculate visibility based on subscribed values
   // Use useMemo to prevent recalculation on every render
+  // Use ref to track previous value and only update when it actually changes
+  const shouldShowRef = useRef(false);
   const shouldShow = useMemo(() => {
-    if (!gameStatus || gameStatus !== 'running') {
-      return false;
+    const newValue = (() => {
+      if (!gameStatus || gameStatus !== 'running') {
+        return false;
+      }
+      // Only hide for Red team when briefing hasn't been dismissed
+      if (role === 'red' && !redBriefingDismissed) {
+        return false;
+      }
+      return true;
+    })();
+    
+    // Only update ref if value actually changed
+    if (shouldShowRef.current !== newValue) {
+      shouldShowRef.current = newValue;
     }
-    // Only hide for Red team when briefing hasn't been dismissed
-    if (role === 'red' && !redBriefingDismissed) {
-      return false;
-    }
-    return true;
+    
+    return shouldShowRef.current;
   }, [gameStatus, role, redBriefingDismissed]);
   
-  // Use shouldShow directly - debouncing was causing banner to not appear
-  // The original flickering issue should be fixed by the improved update logic
+  // Use shouldShow directly - it's now stable and only changes when necessary
   const stableShouldShow = shouldShow;
 
   const formatTime = (seconds: number): string => {
