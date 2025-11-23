@@ -7,8 +7,8 @@ echo "=== Starting Containers Manually ==="
 
 # Stop and remove existing containers
 echo "Stopping existing containers..."
-sudo docker stop pewpew-backend pewpew-frontend 2>/dev/null || true
-sudo docker rm pewpew-backend pewpew-frontend 2>/dev/null || true
+sudo docker stop backend pewpew-backend pewpew-frontend 2>/dev/null || true
+sudo docker rm backend pewpew-backend pewpew-frontend 2>/dev/null || true
 
 # Create network if it doesn't exist
 echo "Creating network..."
@@ -21,7 +21,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Start backend container
 echo "Starting backend container..."
 sudo docker run -d \
-  --name pewpew-backend \
+  --name backend \
   --network pewpew-network \
   -p 8000:8000 \
   -v "$PROJECT_DIR/backend/data:/app/data" \
@@ -53,7 +53,7 @@ sudo docker ps --filter "name=pewpew-"
 
 echo ""
 echo "=== Backend Logs (last 10 lines) ==="
-sudo docker logs --tail 10 pewpew-backend
+sudo docker logs --tail 10 backend
 
 echo ""
 echo "=== Frontend Logs (last 10 lines) ==="
